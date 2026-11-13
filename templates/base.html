@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{% block title %}ОАО «Новая Припять» - Учёт выбытия скота{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/img/logo.svg">
+    <link rel="alternate icon" href="/img/logo.jpg">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://code.jquery.com" crossorigin>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        :root {
+            --primary-gradient: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+        }
+        body {
+            background-color: #f1f5f9;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            color: #1e293b;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .main-wrapper {
+            flex: 1;
+        }
+        .navbar-brand {
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+        .card {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -2px rgba(0,0,0,0.05);
+        }
+        .card-header {
+            border-top-left-radius: 12px !important;
+            border-top-right-radius: 12px !important;
+            font-weight: 600;
+        }
+        .footer {
+            background-color: #0f172a;
+            color: #94a3b8;
+            margin-top: auto;
+        }
+        .navbar.sticky-top {
+            z-index: 1060 !important;
+            overflow: visible !important;
+        }
+        .navbar .dropdown-menu {
+            z-index: 1070 !important;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2) !important;
+        }
+        .navbar-collapse {
+            overflow: visible !important;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Навигационная панель -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top shadow-sm py-2">
+        <div class="container-fluid px-4">
+            <a class="navbar-brand d-flex align-items-center gap-2" href="{{ url_for('index') }}">
+                <img src="/img/logo.svg" onerror="this.onerror=null; this.src='/static/img/logo.svg';" alt="ОАО Новая Припять" width="38" height="38" class="rounded-circle border border-2 border-warning shadow-sm" style="object-fit: contain; background: #064e3b;">
+                <div class="lh-1">
+                    <span class="fs-6 fw-bold text-white d-block">ОАО «Новая Припять»</span>
+                    <small class="text-warning fw-normal" style="font-size: 0.72rem;">Учёт и анализ выбытия КРС</small>
+                </div>
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    {% if session.user_id %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('dashboard') }}"><i class="bi bi-speedometer2"></i> Панель</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('view_cows') }}"><i class="bi bi-list-check"></i> Журнал коров</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('stillborn.stillborn_list') }}"><i class="bi bi-heartbreak text-danger me-1"></i> Мертворождения / Аборты</a>
+                    </li>
+                    {% if session.user_type != 'admin' %}
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="addCowDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-plus-circle"></i> Добавить
+                        </a>
+                        <ul class="dropdown-menu shadow" aria-labelledby="addCowDropdown">
+                            <li><a class="dropdown-item py-2 fw-semibold" href="{{ url_for('add_cows_dynamic') }}"><i class="bi bi-lightning-charge-fill text-warning me-2"></i>Выбытие (быстрый ввод)</a></li>
+                            <li><a class="dropdown-item py-2" href="{{ url_for('add_cow') }}"><i class="bi bi-file-earmark-plus text-primary me-2"></i>Карточка выбытия коровы</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item py-2 text-danger fw-semibold" href="{{ url_for('stillborn.add_stillborn') }}"><i class="bi bi-heartbreak-fill text-danger me-2"></i>Акт мертворождения / аборта</a></li>
+                        </ul>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('import_cows') }}"><i class="bi bi-file-earmark-arrow-up"></i> Импорт Excel/CSV</a>
+                    </li>
+                    {% endif %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('reports') }}"><i class="bi bi-file-earmark-text"></i> Акты & AITS</a>
+                    </li>
+                    {% if session.user_type == 'admin' %}
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle text-warning" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-sliders"></i> Администрирование
+                        </a>
+                        <ul class="dropdown-menu shadow-lg border-0" style="min-width: 260px;">
+                            <li><a class="dropdown-item py-2" href="/pricing"><i class="bi bi-calculator me-2 text-primary"></i> Нормативы цен BYN</a></li>
+                            <li><a class="dropdown-item py-2" href="{{ url_for('user_management') }}"><i class="bi bi-people me-2 text-success"></i> Пользователи ферм</a></li>
+                            <li><a class="dropdown-item py-2" href="{{ url_for('manage_reasons') }}"><i class="bi bi-card-checklist me-2 text-info"></i> Справочник причин</a></li>
+                            <li><a class="dropdown-item py-2" href="{{ url_for('backup_page') }}"><i class="bi bi-shield-lock me-2 text-warning"></i> Резервная копия (Бэкап)</a></li>
+                            <li><a class="dropdown-item py-2" href="{{ url_for('audit_log') }}"><i class="bi bi-shield-shaded me-2 text-secondary"></i> Журнал аудита</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item py-2 text-primary fw-bold" href="{{ url_for('seed_test_data') }}"><i class="bi bi-lightning-charge-fill text-warning me-2"></i> Загрузить 1 000 коров</a></li>
+                            <li><a class="dropdown-item py-2" href="{{ url_for('register') }}"><i class="bi bi-person-plus me-2 text-muted"></i> Создать аккаунт</a></li>
+                        </ul>
+                    </li>
+                    {% endif %}
+                    {% endif %}
+                </ul>
+                <ul class="navbar-nav align-items-center">
+                    {% if session.user_id %}
+                    <li class="nav-item me-3">
+                        <span class="navbar-text text-light">
+                            <i class="bi bi-person-circle"></i> <strong>{{ session.username }}</strong>
+                            {% if session.user_type == 'admin' %}
+                            <span class="badge bg-danger ms-1">Администратор</span>
+                            {% else %}
+                            <span class="badge bg-success ms-1">Ферма: {{ session.farm_name }}</span>
+                            {% endif %}
+                        </span>
+                    </li>
+                    <li class="nav-item">
+                        <a class="btn btn-outline-light btn-sm" href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right"></i> Выйти</a>
+                    </li>
+                    {% else %}
+                    <li class="nav-item">
+                        <a class="btn btn-primary btn-sm px-3" href="{{ url_for('login') }}"><i class="bi bi-box-arrow-in-right"></i> Войти</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Основной контент -->
+    <div class="main-wrapper container-fluid px-4 py-4">
+        <!-- Флеш-сообщения -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category if category != 'error' else 'danger' }} alert-dismissible fade show shadow-sm">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Футер -->
+    <footer class="footer py-3">
+        <div class="container-fluid px-4 text-center">
+            <small>Система оперативного зооветеринарного учёта выбытия скота &copy; 2026. Формы СП-54, Excel-матрицы, аудит и аналитика.</small>
+        </div>
+    </footer>
+
+    <!-- Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script>
+    // Глобальная передача X-CSRFToken для всех AJAX-запросов (jQuery и fetch)
+    (function() {
+        var csrfToken = $('meta[name="csrf-token"]').attr('content');
+        if (csrfToken) {
+            $.ajaxSetup({
+                beforeSend: function(xhr, settings) {
+                    if (!/^(GET|HEAD|OPTIONS|TRACE)$/i.test(settings.type) && !this.crossDomain) {
+                        xhr.setRequestHeader("X-CSRFToken", csrfToken);
+                    }
+                }
+            });
+
+            // Перехват window.fetch для автоматического добавления X-CSRFToken
+            var originalFetch = window.fetch;
+            window.fetch = function(url, options) {
+                options = options || {};
+                var method = (options.method || 'GET').toUpperCase();
+                if (!/^(GET|HEAD|OPTIONS|TRACE)$/.test(method)) {
+                    options.headers = options.headers || {};
+                    if (options.headers instanceof Headers) {
+                        if (!options.headers.has('X-CSRFToken')) {
+                            options.headers.append('X-CSRFToken', csrfToken);
+                        }
+                    } else if (Array.isArray(options.headers)) {
+                        options.headers.push(['X-CSRFToken', csrfToken]);
+                    } else {
+                        if (!options.headers['X-CSRFToken']) {
+                            options.headers['X-CSRFToken'] = csrfToken;
+                        }
+                    }
+                }
+                return originalFetch.call(this, url, options);
+            };
+        }
+    })();
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

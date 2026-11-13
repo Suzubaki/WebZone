@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Генерация отчётов и актов (РБ) - АгроУчёт PRO{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-9">
+        <div class="card shadow-sm mb-4">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h4 class="mb-0"><i class="bi bi-file-earmark-text"></i> Генератор документов и актов (Республика Беларусь)</h4>
+                <span class="badge bg-light text-primary">Минсельхозпрод РБ & AITS</span>
+            </div>
+            <div class="card-body p-4">
+                <form method="POST" action="{{ url_for('generate_report') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="start_date" class="form-label fw-semibold">Начальная дата периода *</label>
+                            <input type="date" class="form-control" id="start_date" name="start_date" required>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="end_date" class="form-label fw-semibold">Конечная дата периода *</label>
+                            <input type="date" class="form-control" id="end_date" name="end_date" required>
+                        </div>
+                        
+                        {% if user_type == 'admin' %}
+                        <div class="col-md-12">
+                            <label for="farm_filter" class="form-label fw-semibold">Выбор хозяйства / МТФ</label>
+                            <select class="form-select" id="farm_filter" name="farm_filter">
+                                <option value="all">Все фермы (Сводный документ по хозяйству)</option>
+                            </select>
+                        </div>
+                        {% else %}
+                        <input type="hidden" name="farm_filter" value="{{ session.farm_name }}">
+                        <div class="col-md-12">
+                            <label class="form-label fw-semibold">Сельхозорганизация / Ферма</label>
+                            <input type="text" class="form-control bg-light" value="{{ session.farm_name }}" disabled>
+                        </div>
+                        {% endif %}
+                        
+                        <div class="col-md-6">
+                            <label for="report_type" class="form-label fw-semibold">Тип формируемого документа *</label>
+                            <select class="form-select" id="report_type" name="report_type" required>
+                                <option value="form_209_apk" selected>Акт на выбытие (Форма 209-АПК РБ — падёж, забой, прирезка)</option>
+                                <option value="form_210_apk">Акт на выбраковку из основного стада (Форма 210-АПК РБ)</option>
+                                <option value="aits_registry">Реестр для ГИС «AITS» (Госпортал идентификации скота)</option>
+                                <option value="matrix">Сводная матрица выбытия (МТФ × Причины выбытия)</option>
+                                <option value="structured">Структурированный сводный отчёт (Excel)</option>
+                                <option value="simple">Простая ведомость (CSV / Excel)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="col-md-6" id="format_container">
+                            <label for="format" class="form-label fw-semibold">Формат выгрузки / вывод *</label>
+                            <select class="form-select" id="format" name="format" required>
+                                <option value="excel">Книга Excel (.xlsx)</option>
+                                <option value="preview">Печатная форма на экран (A4)</option>
+                                <option value="csv">Таблица CSV (.csv)</option>
+                                <option value="xml">XML-реестр (для шлюза AITS)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="col-md-12" id="category_field" style="display: none;">
+                            <label for="report_category" class="form-label fw-semibold">Категория для матричного отчёта *</label>
+                            <select class="form-select" id="report_category" name="report_category">
+                                <option value="падёж">Падёж</option>
+                                <option value="выбраковка">Выбраковка</option>
+                                <option value="санитарный">Санитарный брак (прирезка)</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="d-flex justify-content-end gap-2 mt-4">
+                        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Назад
+                        </a>
+                        <button type="submit" class="btn btn-primary btn-lg">
+                            <i class="bi bi-file-earmark-arrow-down-fill"></i> Сформировать документ
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        {% if user_type == 'admin' %}
+        <div class="card shadow-sm border-danger-subtle">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0"><i class="bi bi-file-earmark-excel"></i> Сводная ведомость по всем МТФ / фермам</h5>
+            </div>
+            <div class="card-body p-4 d-flex justify-content-between align-items-center flex-wrap gap-3">
+                <div>
+                    <h6 class="mb-1">Сводная ведомость падежа и брака по холдингу / району</h6>
+                    <small class="text-muted">Формирует агрегированную таблицу с распределением по подразделениям и категориям.</small>
+                </div>
+                <form method="POST" action="{{ url_for('generate_original_excel_route') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-download"></i> Скачать сводку (.xlsx)
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    {% if user_type == 'admin' %}
+    $.getJSON('{{ url_for("get_farms") }}', function(data) {
+        var $farmSelect = $('#farm_filter');
+        $.each(data, function(index, farm) {
+            $farmSelect.append($('<option>', { value: farm, text: farm }));
+        });
+    });
+    {% endif %}
+    
+    function updateFormFields() {
+        var rType = $('#report_type').val();
+        if (rType === 'matrix') {
+            $('#category_field').slideDown(150);
+            $('#report_category').prop('required', true);
+        } else {
+            $('#category_field').slideUp(150);
+            $('#report_category').prop('required', false);
+        }
+        
+        if (rType === 'aits_registry') {
+            $('#format').val('csv');
+        }
+    }
+    
+    $('#report_type').change(updateFormFields);
+    updateFormFields();
+    
+    var today = new Date();
+    var firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+    $('#start_date').val(firstDay.toISOString().split('T')[0]);
+    $('#end_date').val(today.toISOString().split('T')[0]);
+});
+</script>
+{% endblock %}

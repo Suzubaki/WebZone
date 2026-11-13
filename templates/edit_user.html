@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Редактирование пользователя - Учёт выбытия скота{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0"><i class="bi bi-pencil-square"></i> Редактирование пользователя: {{ user.username }}</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('edit_user', user_id=user.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Имя пользователя</label>
+                        <input type="text" class="form-control" id="username" name="username" value="{{ user.username }}" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Новый пароль (оставьте пустым, если не меняете)</label>
+                        <input type="password" class="form-control" id="password" name="password">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="user_type" class="form-label">Тип пользователя</label>
+                        <select class="form-select" id="user_type" name="user_type" required onchange="toggleFarmField()">
+                            <option value="admin" {% if user.user_type == 'admin' %}selected{% endif %}>Администратор</option>
+                            <option value="farm" {% if user.user_type == 'farm' %}selected{% endif %}>Ферма</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3" id="farm_name_field" {% if user.user_type != 'farm' %}style="display: none;"{% endif %}>
+                        <label for="farm_name" class="form-label">Название фермы</label>
+                        <input type="text" class="form-control" id="farm_name" name="farm_name" value="{{ user.farm_name or '' }}">
+                    </div>
+                    
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="{{ url_for('user_management') }}" class="btn btn-secondary me-2">
+                            <i class="bi bi-arrow-left"></i> Назад
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-save"></i> Сохранить изменения
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleFarmField() {
+    var userType = document.getElementById('user_type').value;
+    var farmField = document.getElementById('farm_name_field');
+    var farmInput = document.getElementById('farm_name');
+    
+    if (userType === 'farm') {
+        farmField.style.display = 'block';
+        farmInput.required = true;
+    } else {
+        farmField.style.display = 'none';
+        farmInput.required = false;
+    }
+}
+</script>
+{% endblock %}
