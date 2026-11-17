@@ -44,10 +44,10 @@ def create_default_users(include_demo_farms=False):
         admin_pwd = secrets.token_urlsafe(12)
         generated = True
 
-    ok, msg = register_user('admin', admin_pwd, 'admin', must_change_password=True)
-    lines = [f"Создан первичный администратор: username=admin (обязательна смена пароля при входе)"]
+    ok, msg = register_user('admin', admin_pwd, 'admin', must_change_password=False)
+    lines = [f"Создан первичный администратор: username=admin"]
     if generated and ok:
-        lines.append(f"Временный пароль admin: {admin_pwd}")
+        lines.append(f"Пароль admin: {admin_pwd}")
 
     if include_demo_farms and ok:
         for idx in (1, 2):

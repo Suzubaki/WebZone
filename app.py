@@ -188,15 +188,6 @@ def check_rate_limit(tracker, ip, max_reqs, window_sec, burst_limit=None, burst_
 
 _COMPRESSIBLE_PREFIXES = ('text/', 'application/json', 'application/javascript', 'image/svg+xml')
 _STATIC_CACHE_PREFIXES = ('/static/', '/img/', '/assets/', '/favicon', '/logo.')
-_PASSWORD_CHANGE_ALLOWED_ENDPOINTS = (
-    'auth.change_password',
-    'auth.logout',
-    'static',
-    'serve_public_assets',
-    'serve_img',
-    'serve_favicon',
-    'serve_logo_direct',
-)
 
 
 @app.before_request
@@ -232,12 +223,7 @@ def sync_current_user_session():
             session['farm_name'] = user.farm_name
             session['username'] = user.username
             session['user_type'] = user.user_type
-            session['must_change_password'] = bool(user.must_change_password)
             session['_user_sync_ts'] = now
-
-        if session.get('must_change_password') and request.endpoint not in _PASSWORD_CHANGE_ALLOWED_ENDPOINTS:
-            flash('Необходимо сменить временный пароль перед дальнейшей работой.', 'warning')
-            return redirect(url_for('auth.change_password'))
 
 
 @app.after_request
@@ -325,7 +311,6 @@ def override_url_for():
             'dashboard': 'main.dashboard',
             'login': 'auth.login',
             'logout': 'auth.logout',
-            'change_password': 'auth.change_password',
             'register': 'auth.register',
             'user_management': 'auth.user_management',
             'edit_user': 'auth.edit_user',
@@ -397,6 +382,6 @@ if __name__ == '__main__':
     init_db()
     from create_users import create_default_users
     create_default_users()
-    port = int(os.environ.get('APP_PORT', 3000))
+    port = int(os.environ.get('PORT') or os.environ.get('DEFAULT_APP_PORT') or 3000)
     is_debug = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1')
     app.run(host='0.0.0.0', port=port, debug=is_debug, threaded=True)

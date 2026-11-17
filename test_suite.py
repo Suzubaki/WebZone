@@ -297,26 +297,13 @@ class CattleSystemTestCase(unittest.TestCase):
         self.assertIn(b'admin', res_other_ip.data)
         self.logout()
 
-        # 8.3 Обязательная смена временного пароля
-        register_user('temp_user', 'TempPass#123', 'farm', 'Ферма 1', must_change_password=True)
-        res_temp = self.login('temp_user', 'TempPass#123', follow_redirects=False)
-        self.assertEqual(res_temp.status_code, 302)
-        self.assertIn('/change_password', res_temp.headers['Location'])
-
-        # Попытка перейти на /dashboard без смены пароля перенаправляет обратно
-        res_dash = self.client.get('/dashboard', follow_redirects=False)
-        self.assertEqual(res_dash.status_code, 302)
-        self.assertIn('/change_password', res_dash.headers['Location'])
-
-        csrf_cp = self.get_csrf_token('/change_password')
-        res_changed = self.client.post('/change_password', data={
-            'csrf_token': csrf_cp,
-            'current_password': 'TempPass#123',
-            'new_password': 'NewStrongPass#456',
-            'confirm_password': 'NewStrongPass#456'
-        }, follow_redirects=True)
-        self.assertEqual(res_changed.status_code, 200)
-        self.assertIsNotNone(authenticate_user('temp_user', 'NewStrongPass#456'))
+        # 8.3 Закрытая система: самостоятельная смена пароля отключена (/change_password -> 404)
+        self.login('farm1', 'Farm1Test#123')
+        res_dash = self.client.get('/dashboard')
+        self.assertEqual(res_dash.status_code, 200)
+        self.assertNotIn(b'/change_password', res_dash.data)
+        res_cp = self.client.get('/change_password')
+        self.assertEqual(res_cp.status_code, 404)
         self.logout()
 
         # 8.4 Переименование фермы пользователя A не затрагивает записи пользователя B
@@ -403,7 +390,7 @@ class CattleSystemTestCase(unittest.TestCase):
                 create_default_users()
                 u = authenticate_user('admin', 'InitEnvPass#999')
                 self.assertIsNotNone(u)
-                self.assertTrue(u.must_change_password)
+                self.assertFalse(u.must_change_password)
 
                 # Повторный запуск на непустой БД не должен менять или пересоздавать пользователей
                 os.environ['INITIAL_ADMIN_PASSWORD'] = 'AnotherPass#888'

@@ -1,11 +1,11 @@
-# routes/auth.py - Аутентификация и управление пользователями
+# routes/auth.py - Аутентификация и управление пользователями (закрытая система)
 import time
 from functools import wraps
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 from database import get_db_connection, log_audit_event
 from auth import (
     authenticate_user, register_user, get_user_by_id,
-    get_all_users, update_user, change_user_password
+    get_all_users, update_user
 )
 
 auth_bp = Blueprint('auth', __name__)
@@ -92,10 +92,8 @@ def admin_required(f):
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
-    """Авторизация пользователя в системе."""
+    """Авторизация пользователя по учётным данным, выданным администратором."""
     if 'user_id' in session:
-        if session.get('must_change_password'):
-            return redirect(url_for('auth.change_password'))
         return redirect(url_for('main.dashboard'))
 
     if request.method == 'POST':
@@ -116,7 +114,6 @@ def login():
             session['username'] = user.username
             session['user_type'] = user.user_type
             session['farm_name'] = user.farm_name
-            session['must_change_password'] = bool(user.must_change_password)
             session['_user_sync_ts'] = time.time()
 
             log_audit_event(
@@ -130,10 +127,6 @@ def login():
                 ip_address=client_ip
             )
 
-            if user.must_change_password:
-                flash('Для продолжения работы необходимо сменить временный пароль.', 'warning')
-                return redirect(url_for('auth.change_password'))
-
             flash(f'Добро пожаловать, {user.username}!', 'success')
             return redirect(url_for('main.dashboard'))
         else:
@@ -141,57 +134,6 @@ def login():
             flash('Неверное имя пользователя или пароль', 'danger')
 
     return render_template('login.html')
-
-
-@auth_bp.route('/change_password', methods=['GET', 'POST'])
-@login_required
-def change_password():
-    """Смена собственного пароля (в т.ч. обязательная при первом входе)."""
-    user = get_user_by_id(session['user_id'])
-    if not user:
-        session.clear()
-        return redirect(url_for('auth.login'))
-
-    if request.method == 'POST':
-        current_password = request.form.get('current_password', '')
-        new_password = request.form.get('new_password', '')
-        confirm_password = request.form.get('confirm_password', '')
-
-        if not user.check_password(current_password):
-            flash('Текущий пароль указан неверно', 'danger')
-            return render_template('change_password.html', forced=bool(session.get('must_change_password')))
-
-        if len(new_password) < 8:
-            flash('Новый пароль должен содержать не менее 8 символов', 'danger')
-            return render_template('change_password.html', forced=bool(session.get('must_change_password')))
-
-        if new_password != confirm_password:
-            flash('Новый пароль и подтверждение не совпадают', 'danger')
-            return render_template('change_password.html', forced=bool(session.get('must_change_password')))
-
-        if new_password == current_password:
-            flash('Новый пароль должен отличаться от текущего', 'danger')
-            return render_template('change_password.html', forced=bool(session.get('must_change_password')))
-
-        ok, message = change_user_password(user.id, new_password)
-        if ok:
-            session['must_change_password'] = False
-            session['_user_sync_ts'] = time.time()
-            log_audit_event(
-                username=user.username,
-                farm_name=user.farm_name,
-                action='CHANGE_PASSWORD',
-                entity_type='USER',
-                entity_id=user.id,
-                details='Пользователь обновил пароль',
-                user_id=user.id,
-                ip_address=request.remote_addr
-            )
-            flash('Пароль успешно изменён', 'success')
-            return redirect(url_for('main.dashboard'))
-        flash(message, 'danger')
-
-    return render_template('change_password.html', forced=bool(session.get('must_change_password')))
 
 
 @auth_bp.route('/logout')
@@ -227,11 +169,8 @@ def register():
         password = request.form.get('password', '')
         user_type = request.form.get('user_type')
         farm_name = request.form.get('farm_name', '').strip() if user_type == 'farm' else None
-        must_change = request.form.get('must_change_password') in ('on', '1', 'true', 'True')
 
-        success, message = register_user(
-            username, password, user_type, farm_name, must_change_password=must_change
-        )
+        success, message = register_user(username, password, user_type, farm_name)
         if success:
             log_audit_event(
                 username=session.get('username'),
@@ -261,7 +200,7 @@ def user_management():
 @auth_bp.route('/edit_user/<int:user_id>', methods=['GET', 'POST'])
 @admin_required
 def edit_user(user_id):
-    """Редактирование профиля пользователя."""
+    """Редактирование профиля и пароля пользователя администратором."""
     user = get_user_by_id(user_id)
     if not user:
         flash('Пользователь не найден', 'danger')
@@ -272,15 +211,13 @@ def edit_user(user_id):
         password = request.form.get('password', '')
         user_type = request.form.get('user_type')
         farm_name = request.form.get('farm_name', '').strip() if user_type == 'farm' else None
-        must_change = request.form.get('must_change_password') in ('on', '1', 'true', 'True')
 
         success, message = update_user(
             user_id,
             username,
             password if password else None,
             user_type,
-            farm_name,
-            must_change_password=must_change
+            farm_name
         )
         if success:
             log_audit_event(
