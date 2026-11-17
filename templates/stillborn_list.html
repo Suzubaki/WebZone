@@ -174,7 +174,7 @@
                                         {% elif r.fetus_sex == 'Бычок' %}
                                             <span class="badge bg-primary"><i class="bi bi-gender-male"></i> Бычок</span>
                                         {% elif 'Двойня' in (r.fetus_sex or '') %}
-                                            <span class="badge bg-success text-white">Двойня</span>
+                                            <span class="badge bg-success text-white">{{ r.fetus_sex }}</span>
                                         {% else %}
                                             <span class="badge bg-light text-muted border">{{ r.fetus_sex or 'Не определён' }}</span>
                                         {% endif %}

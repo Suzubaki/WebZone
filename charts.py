@@ -1060,9 +1060,9 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             abortion_cnt += 1
 
         sx = (r['fetus_sex'] or 'Не определён').lower()
-        if 'быч' in sx: sb_sex_counts['Бычки'] += 1
+        if 'двойн' in sx: sb_sex_counts['Двойня'] += 1
+        elif 'быч' in sx: sb_sex_counts['Бычки'] += 1
         elif 'тёл' in sx or 'тел' in sx: sb_sex_counts['Тёлочки'] += 1
-        elif 'двойн' in sx: sb_sex_counts['Двойня'] += 1
         else: sb_sex_counts['Не определён'] += 1
 
         mg = r['mother_group'] or 'Полновозрастные'

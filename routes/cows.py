@@ -368,6 +368,11 @@ def add_cow():
             age_groups=Config.AGE_GROUPS,
             mother_groups=Config.MOTHER_GROUPS,
             event_types=Config.STILLBIRTH_EVENT_TYPES,
+            fetus_sexes=Config.FETUS_SEXES,
+            stillborn_causes=Config.STILLBIRTH_CAUSES,
+            mother_conditions=Config.MOTHER_CONDITIONS,
+            default_attendant=Config.DEFAULT_ATTENDANT,
+            stillborn_prefill=Config.STILLBORN_PREFILL_MAP,
             today=today,
             form_data=form_data or {}
         )
@@ -375,12 +380,22 @@ def add_cow():
     if request.method == 'POST':
         if request.form.get('form_mode') == 'stillborn':
             sb_date = (request.form.get('disposal_date') or today).strip()
-            if sb_date > today:
-                flash('Дата события не может быть позже сегодняшнего дня', 'danger')
+            if not sb_date or sb_date > today:
+                flash('Дата события не может быть пустой или позже сегодняшнего дня', 'danger')
                 return _render_add(request.form)
-            sb_reason = request.form.get('reason') or Config.STILLBIRTH_EVENT_TYPES[0]
+            sb_reason = (request.form.get('reason') or '').strip()
+            if not sb_reason:
+                flash('Укажите тип события / патологии плода', 'danger')
+                return _render_add(request.form)
+            sb_fetus_sex = (request.form.get('fetus_sex') or '').strip() or 'Не определён'
+            sb_cause = (request.form.get('cause') or '').strip() or sb_reason
+            sb_custom_cause = (request.form.get('custom_cause') or '').strip()
+            if sb_custom_cause and sb_cause == 'Другое':
+                sb_cause = sb_custom_cause
             sb_mother_tag = request.form.get('ear_tag', '').strip() or None
             sb_mother_group = request.form.get('mother_group') or Config.DEFAULT_STILLBORN_MOTHER_GROUP
+            sb_mother_condition = (request.form.get('mother_condition') or '').strip() or Config.MOTHER_CONDITIONS[0]
+            sb_attendant = (request.form.get('attendant') or '').strip() or Config.DEFAULT_ATTENDANT
             sb_notes = request.form.get('notes', '').strip() or None
             def_gest, def_w = Config.infer_stillborn_defaults(sb_reason)
             try:
@@ -403,8 +418,8 @@ def add_cow():
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 sb_code, farm_name, sb_date, sb_mother_tag, sb_mother_group,
-                sb_reason, 'Не определён', sb_weight, sb_gest, sb_reason,
-                Config.MOTHER_CONDITIONS[0], Config.DEFAULT_ATTENDANT, sb_notes, session.get('user_id')
+                sb_reason, sb_fetus_sex, sb_weight, sb_gest, sb_cause,
+                sb_mother_condition, sb_attendant, sb_notes, session.get('user_id')
             ))
             new_id = cursor.lastrowid
             conn.commit()
@@ -416,7 +431,7 @@ def add_cow():
                 action='CREATE',
                 entity_type='STILLBORN',
                 entity_id=new_id,
-                details=f"Зарегистрирован акт мертворождения {sb_code} (мать: {sb_mother_tag or '-'}, {sb_mother_group})",
+                details=f"Зарегистрирован акт мертворождения {sb_code} (мать: {sb_mother_tag or '-'}, {sb_mother_group}, пол плода: {sb_fetus_sex})",
                 user_id=session.get('user_id'),
                 ip_address=request.remote_addr
             )
@@ -746,8 +761,15 @@ def add_multiple_cows():
             # Обособленная регистрация мертворождения / аборта в stillbirth_records
             if form_mode == 'stillborn' or is_stillborn_flag:
                 sb_reason = item.get('reason') or Config.STILLBIRTH_EVENT_TYPES[0]
+                sb_fetus_sex = (item.get('fetus_sex') or '').strip() or 'Не определён'
+                sb_cause = (item.get('cause') or '').strip() or sb_reason
+                sb_custom_cause = (item.get('custom_cause') or '').strip()
+                if sb_custom_cause and sb_cause == 'Другое':
+                    sb_cause = sb_custom_cause
                 sb_mother_tag = (item.get('ear_tag') or '').strip() or None
                 sb_mother_group = item.get('mother_group') or Config.DEFAULT_STILLBORN_MOTHER_GROUP
+                sb_mother_condition = (item.get('mother_condition') or '').strip() or Config.MOTHER_CONDITIONS[0]
+                sb_attendant = (item.get('attendant') or '').strip() or Config.DEFAULT_ATTENDANT
                 sb_notes = (item.get('notes') or '').strip() or None
                 def_gest, def_w = Config.infer_stillborn_defaults(sb_reason)
                 try:
@@ -768,8 +790,8 @@ def add_multiple_cows():
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     sb_code, farm_name, d_date, sb_mother_tag, sb_mother_group,
-                    sb_reason, 'Не определён', sb_weight, sb_gest, sb_reason,
-                    Config.MOTHER_CONDITIONS[0], Config.DEFAULT_ATTENDANT, sb_notes, session.get('user_id')
+                    sb_reason, sb_fetus_sex, sb_weight, sb_gest, sb_cause,
+                    sb_mother_condition, sb_attendant, sb_notes, session.get('user_id')
                 ))
                 added_stillborn_count += 1
                 continue
