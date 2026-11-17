@@ -2,6 +2,34 @@
 
 {% block title %}Добавление записи - {{ org_name }}{% endblock %}
 
+{% block extra_css %}
+<style>
+#entry-mode-tabs .nav-link {
+    transition: all 0.18s ease;
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+}
+#entry-mode-tabs #mode-cow-tab:not(.active) {
+    color: #0d6efd !important;
+}
+#entry-mode-tabs #mode-cow-tab.active {
+    background-color: #0d6efd !important;
+    border-color: #0d6efd !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 10px rgba(13, 110, 253, 0.25);
+}
+#entry-mode-tabs #mode-stillborn-tab:not(.active) {
+    color: #dc3545 !important;
+}
+#entry-mode-tabs #mode-stillborn-tab.active {
+    background-color: #dc3545 !important;
+    border-color: #dc3545 !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 10px rgba(220, 53, 69, 0.25);
+}
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-lg-10 col-xl-9">
@@ -10,11 +38,11 @@
         <div class="card border-0 shadow-sm mb-4 rounded-4 overflow-hidden">
             <div class="card-body p-2 bg-light">
                 <div class="nav nav-pills nav-justified gap-2" id="entry-mode-tabs" role="tablist">
-                    <button class="nav-link active rounded-3 py-2.5 fw-semibold d-flex align-items-center justify-content-center gap-2 text-primary" id="mode-cow-tab" data-bs-toggle="pill" data-bs-target="#mode-cow" type="button" role="tab">
+                    <button class="nav-link active rounded-3 py-2.5 fw-semibold d-flex align-items-center justify-content-center gap-2" id="mode-cow-tab" data-bs-toggle="pill" data-bs-target="#mode-cow" type="button" role="tab">
                         <i class="bi bi-card-checklist fs-5"></i>
                         <span>Выбытие взрослого скота / молодняка</span>
                     </button>
-                    <button class="nav-link rounded-3 py-2.5 fw-semibold d-flex align-items-center justify-content-center gap-2 text-danger" id="mode-stillborn-tab" data-bs-toggle="pill" data-bs-target="#mode-stillborn" type="button" role="tab">
+                    <button class="nav-link rounded-3 py-2.5 fw-semibold d-flex align-items-center justify-content-center gap-2" id="mode-stillborn-tab" data-bs-toggle="pill" data-bs-target="#mode-stillborn" type="button" role="tab">
                         <i class="bi bi-heartbreak-fill fs-5"></i>
                         <span>Регистрация мертворождения / аборта</span>
                     </button>
