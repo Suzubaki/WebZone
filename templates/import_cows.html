@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Импорт из Excel / CSV - АгроУчёт PRO{% endblock %}
+{% block title %}Импорт из Excel / CSV - {{ org_name }}{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
@@ -15,8 +15,8 @@
                     <h5 class="alert-heading"><i class="bi bi-info-circle-fill"></i> Инструкция по загрузке</h5>
                     <p class="mb-2">Вы можете загрузить готовую ведомость выбытия в формате <strong>.XLSX</strong> или <strong>.CSV</strong>.</p>
                     <ul class="mb-2">
-                        <li><strong>Категория</strong> должна быть одной из: <code>падёж</code>, <code>выбраковка</code>, <code>санитарный</code>.</li>
-                        <li><strong>Дата</strong> в формате <code>ГГГГ-ММ-ДД</code> (не позже сегодняшней).</li>
+                        <li><strong>Категория</strong> должна быть одной из: <code>падёж</code>, <code>выбраковка</code>, <code>санитарный</code> (или <code>мертворождение</code> / <code>аборт</code> — автоматически попадут в журнал мертворождений).</li>
+                        <li><strong>Дата</strong> в формате <code>ГГГГ-ММ-ДД</code> или <code>ДД.ММ.ГГГГ</code> (не позже сегодняшней).</li>
                         <li>Системные ID коров будут автоматически сгенерированы для вашей фермы <code>{{ farm_name }}</code>.</li>
                     </ul>
                     <a href="{{ url_for('download_import_template') }}" class="btn btn-outline-primary btn-sm mt-1">

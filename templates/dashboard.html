@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Аналитический дашборд - АгроУчёт PRO{% endblock %}
+{% block title %}Аналитический дашборд - {{ org_name }}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -153,7 +153,7 @@
             </div>
             <div class="d-flex gap-2 flex-wrap no-print">
                 {% if user_type != 'admin' %}
-                <a href="{{ url_for('add_cows_dynamic') }}" class="btn btn-light text-primary fw-semibold">
+                <a href="{{ url_for('add_cow') }}" class="btn btn-light text-primary fw-semibold">
                     <i class="bi bi-plus-circle-fill"></i> Ввод выбытия
                 </a>
                 <a href="{{ url_for('import_cows') }}" class="btn btn-outline-light">
@@ -501,7 +501,7 @@
                 </div>
             </div>
             <div class="mt-2 small text-muted">
-                Падёж + ущерб от выбраковки + упущенное молоко ({{ "{:,.0f}".format(d.kpi.unrealized_milk_loss_byn or 0).replace(',', ' ') }} BYN) − сдача на мясокомбинат
+                Падёж + ущерб от выбраковки + упущенное молоко ({{ "{:,.0f}".format(d.kpi.unrealized_milk_loss_byn or 0).replace(',', ' ') }} BYN) + неокупаемость первотёлок − сдача мяса
             </div>
         </div>
     </div>
@@ -515,7 +515,7 @@
                 <h5 class="mb-0 fw-bold text-dark d-flex align-items-center gap-2">
                     <i class="bi bi-cpu-fill text-primary"></i> Углубленная аналитика лактации и сохранности молодняка
                 </h5>
-                <small class="text-muted">Мониторинг критических фаз лактации (DIM) и возрастных групп (ОАО «Новая Припять»)</small>
+                <small class="text-muted">Мониторинг критических фаз лактации (DIM) и возрастных групп ({{ org_name }})</small>
             </div>
             <div class="d-flex gap-2">
                 <a href="{{ safe_url_for('reports.reports_page', default=safe_url_for('reports', default='/reports')) }}" class="btn btn-sm btn-outline-primary fw-semibold">
@@ -673,7 +673,7 @@
             </div>
         </div>
 
-        <!-- ВЕТЕРИНАРНЫЙ СКОРКАРД: 6 ключевых индикаторов эффективности (Бенчмарки Минсельхозпрода РБ) -->
+        <!-- ВЕТЕРИНАРНЫЙ СКОРКАРД: 5 ключевых индикаторов эффективности (Бенчмарки Минсельхозпрода РБ) -->
         {% if d.scorecard %}
         <div class="card border bg-white shadow-none mt-2">
             <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -808,13 +808,13 @@
             </div>
         </div>
 
-        <!-- Графики: Сроки стельности выбывших коров и Сравнение ферм (Падёж vs Брак) -->
+        <!-- Графики: Сроки стельности и Топ причин выбытия стельных коров -->
         <div class="row g-3 mb-3">
             <div class="col-lg-6">
                 <div class="card border bg-white h-100 shadow-none">
                     <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
                         <span class="fw-bold small text-dark"><i class="bi bi-pie-chart text-danger me-1"></i> Сроки стельности выбывших коров</span>
-                        <span class="badge bg-light text-muted border">Распределение по триместрам</span>
+                        <span class="small text-muted">По триместрам</span>
                     </div>
                     <div class="card-body">
                         <div class="chart-box" style="height: 250px;">
@@ -827,12 +827,12 @@
             <div class="col-lg-6">
                 <div class="card border bg-white h-100 shadow-none">
                     <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
-                        <span class="fw-bold small text-dark"><i class="bi bi-bar-chart-line text-danger me-1"></i> Выбытие стельных коров по МТФ: Падёж vs Выбраковка</span>
-                        <span class="badge bg-light text-muted border">Сравнение подразделений</span>
+                        <span class="fw-bold small text-dark"><i class="bi bi-clipboard2-pulse text-danger me-1"></i> Главные причины выбытия стельных коров</span>
+                        <span class="small text-muted">Топ диагнозов</span>
                     </div>
                     <div class="card-body">
                         <div class="chart-box" style="height: 250px;">
-                            <canvas id="reproductionFarmsChart"></canvas>
+                            <canvas id="reproductionReasonsChart"></canvas>
                         </div>
                     </div>
                 </div>
@@ -845,10 +845,10 @@
                 <div class="card border bg-white h-100 shadow-none">
                     <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
                         <span class="fw-bold small text-dark"><i class="bi bi-heartbreak text-danger me-1"></i> Причины мертворождений и абортов</span>
-                        <span class="badge bg-danger-subtle text-danger border">Всего: {{ d.reproduction.stillborn_count }} случаев</span>
+                        <span class="small text-danger fw-semibold">Всего: {{ d.reproduction.stillborn_count }} случаев</span>
                     </div>
                     <div class="card-body">
-                        <div class="chart-box" style="height: 250px;">
+                        <div class="chart-box" style="height: 260px;">
                             <canvas id="stillbirthCausesChart"></canvas>
                         </div>
                     </div>
@@ -859,10 +859,10 @@
                 <div class="card border bg-white h-100 shadow-none">
                     <div class="card-header bg-white py-2 d-flex justify-content-between align-items-center">
                         <span class="fw-bold small text-dark"><i class="bi bi-pie-chart-fill text-primary me-1"></i> Потери плода по группам матерей</span>
-                        <span class="badge bg-light text-muted border">Ср. масса плода: {{ d.reproduction.avg_fetus_weight }} кг</span>
+                        <span class="small text-muted">Ср. масса плода: {{ d.reproduction.avg_fetus_weight }} кг</span>
                     </div>
                     <div class="card-body">
-                        <div class="chart-box" style="height: 250px;">
+                        <div class="chart-box" style="height: 260px;">
                             <canvas id="stillbirthMothersChart"></canvas>
                         </div>
                     </div>
@@ -932,7 +932,7 @@
         <div class="card shadow-sm h-100">
             <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
                 <h6 class="mb-0 fw-bold"><i class="bi bi-graph-up text-primary me-2"></i> Помесячная динамика выбытия (за 12 месяцев)</h6>
-                <span class="badge bg-light text-muted">Падёж / Выбраковка / Санбрак</span>
+                <span class="small text-muted">Динамика по месяцам</span>
             </div>
             <div class="card-body">
                 <div class="chart-box" style="height: 300px;">
@@ -945,11 +945,12 @@
     <!-- Структура категорий (Doughnut) -->
     <div class="col-lg-4">
         <div class="card shadow-sm h-100">
-            <div class="card-header bg-white py-3">
+            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
                 <h6 class="mb-0 fw-bold"><i class="bi bi-pie-chart-fill text-danger me-2"></i> Доли категорий выбытия</h6>
+                <span class="small text-muted">Всего: {{ d.kpi.total_disposals }} гол.</span>
             </div>
             <div class="card-body d-flex flex-column justify-content-center">
-                <div class="chart-box" style="height: 250px;">
+                <div class="chart-box" style="height: 230px;">
                     <canvas id="categoryDoughnut"></canvas>
                 </div>
                 <div class="d-flex justify-content-around text-center mt-3 pt-2 border-top">
@@ -971,26 +972,22 @@
     </div>
 </div>
 
-<!-- Ряд 2 графиков: Комплексный профиль лактации (DIM) + Продуктивность коров (Удой) -->
+<!-- Ряд 2 графиков: Фазы лактации (DIM) + Продуктивность коров (Удой) -->
 <div class="row g-3 mb-4">
-    <!-- Комплексный профиль лактации (Фазы DIM) -->
+    <!-- Фазы лактации (DIM) -->
     <div class="col-lg-6">
-        <div class="card shadow-sm h-100 border-primary-subtle">
-            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                <h6 class="mb-0 fw-bold text-primary">
-                    <i class="bi bi-water me-2"></i> Комплексный профиль лактации (Фазы DIM)
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h6 class="mb-0 fw-bold text-dark">
+                    <i class="bi bi-water text-primary me-2"></i> Выбытие по фазам лактации (DIM)
                 </h6>
-                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
-                    Новотел 0-30 дн: {{ d.kpi.fresh_disposals }} гол. ({{ d.kpi.fresh_deaths }} пало)
+                <span class="small text-danger fw-semibold">
+                    Новотел 0–30 дн.: {{ d.kpi.fresh_disposals }} гол. ({{ d.kpi.fresh_deaths }} пало)
                 </span>
             </div>
             <div class="card-body">
-                <div class="chart-box">
+                <div class="chart-box" style="height: 290px;">
                     <canvas id="dimComprehensiveChart"></canvas>
-                </div>
-                <div class="d-flex justify-content-center gap-4 text-center mt-2 small text-muted">
-                    <span><i class="bi bi-square-fill text-danger"></i> Падёж скота</span>
-                    <span><i class="bi bi-square-fill text-primary"></i> Выбраковка и санбрак</span>
                 </div>
             </div>
         </div>
@@ -998,22 +995,18 @@
 
     <!-- Продуктивность выбывших коров (Удой за лактацию, кг) -->
     <div class="col-lg-6">
-        <div class="card shadow-sm h-100 border-info-subtle">
+        <div class="card shadow-sm h-100">
             <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <h6 class="mb-0 fw-bold text-dark">
                     <i class="bi bi-speedometer text-info me-2"></i> Продуктивность выбывших коров (Удой, кг)
                 </h6>
-                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
-                    Потеряно лидеров (>6 500 кг): {{ d.kpi.high_yield_lost_count }} гол.
+                <span class="small text-danger fw-semibold">
+                    Лидеры (≥ {{ "{:,.0f}".format(d.kpi.high_yield_threshold_kg or 6500).replace(',', ' ') }} кг): {{ d.kpi.high_yield_lost_count }} гол.
                 </span>
             </div>
             <div class="card-body">
-                <div class="chart-box">
+                <div class="chart-box" style="height: 290px;">
                     <canvas id="milkProductivityChart"></canvas>
-                </div>
-                <div class="d-flex justify-content-center gap-4 text-center mt-2 small text-muted">
-                    <span><i class="bi bi-square-fill text-danger"></i> Падёж (потеря генетики)</span>
-                    <span><i class="bi bi-square-fill text-primary"></i> Выбраковка</span>
                 </div>
             </div>
         </div>
@@ -1022,21 +1015,16 @@
 
 <!-- Ряд 3 графиков: Половозрастные группы скота (ПВГ) + Лактационный возраст и окупаемость -->
 <div class="row g-3 mb-4">
-    <!-- Половозрастные группы (ПВГ) со стеком -->
+    <!-- Половозрастные группы (ПВГ) горизонтальный стек -->
     <div class="col-lg-6">
         <div class="card shadow-sm h-100">
             <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                <h6 class="mb-0 fw-bold"><i class="bi bi-diagram-3-fill text-success me-2"></i> Выбытие по половозрастным группам (ПВГ)</h6>
-                <span class="badge bg-light text-success border">Молодняк: {{ d.kpi.youngstock_disposals }} гол.</span>
+                <h6 class="mb-0 fw-bold"><i class="bi bi-diagram-3-fill text-success me-2"></i> Половозрастные группы скота (ПВГ)</h6>
+                <span class="small text-success fw-semibold">Молодняк: {{ d.kpi.youngstock_disposals }} гол.</span>
             </div>
             <div class="card-body">
-                <div class="chart-box">
+                <div class="chart-box" style="height: 310px;">
                     <canvas id="ageGroupChart"></canvas>
-                </div>
-                <div class="d-flex justify-content-center gap-3 text-center mt-2 small text-muted">
-                    <span><i class="bi bi-square-fill text-danger"></i> Падёж</span>
-                    <span><i class="bi bi-square-fill text-primary"></i> Выбраковка</span>
-                    <span><i class="bi bi-square-fill text-warning"></i> Санбрак</span>
                 </div>
             </div>
         </div>
@@ -1044,58 +1032,33 @@
 
     <!-- Лактационный возраст и окупаемость коров -->
     <div class="col-lg-6">
-        <div class="card shadow-sm h-100 border-warning-subtle">
+        <div class="card shadow-sm h-100">
             <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <h6 class="mb-0 fw-bold text-dark">
-                    <i class="bi bi-bar-chart-steps text-warning-emphasis me-2"></i> Лактационный возраст и окупаемость
+                    <i class="bi bi-bar-chart-steps text-warning-emphasis me-2"></i> Лактационный возраст (№ лактации)
                 </h6>
-                <span class="badge bg-danger-subtle text-danger border border-danger-subtle" title="Коровы, не окупившие затраты на выращивание нетели">
-                    Не окупили выращивание (1 лакт.): {{ d.kpi.unrecovered_cows_pct }}%
+                <span class="small text-danger fw-semibold" title="Коровы, не окупившие затраты на выращивание нетели">
+                    1-я лактация: {{ d.kpi.unrecovered_cows_pct }}% · Ср. лактация: {{ d.kpi.avg_lactation }}
                 </span>
             </div>
             <div class="card-body">
-                <div class="chart-box">
+                <div class="chart-box" style="height: 310px;">
                     <canvas id="longevityChart"></canvas>
-                </div>
-                <div class="d-flex justify-content-center gap-4 text-center mt-2 small text-muted">
-                    <span><i class="bi bi-square-fill text-danger"></i> Падёж</span>
-                    <span><i class="bi bi-square-fill text-primary"></i> Выбраковка</span>
-                    <span class="text-dark fw-semibold">Ср. лактация: {{ d.kpi.avg_lactation }}</span>
                 </div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Ряд 3.5: Сезонность выбытия скота + Матрица «Патология × Фаза DIM» -->
+<!-- Ряд 3.5: Матрица рисков «Патология × Фаза DIM» на всю ширину -->
 <div class="row g-3 mb-4">
-    <!-- Сезонность выбытия -->
-    <div class="col-lg-5">
-        <div class="card shadow-sm h-100">
-            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                <h6 class="mb-0 fw-bold"><i class="bi bi-calendar4-week text-primary me-2"></i> Сезонность выбытия скота</h6>
-                <span class="badge bg-light text-muted border">Зима / Весна / Лето / Осень</span>
-            </div>
-            <div class="card-body">
-                <div class="chart-box">
-                    <canvas id="seasonalityChart"></canvas>
-                </div>
-                <div class="d-flex justify-content-center gap-3 text-center mt-2 small text-muted">
-                    <span><i class="bi bi-square-fill text-danger"></i> Падёж</span>
-                    <span><i class="bi bi-square-fill text-primary"></i> Выбраковка</span>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Тепловая матрица рисков «Патология × Фаза DIM» -->
-    <div class="col-lg-7">
+    <div class="col-lg-12">
         <div class="card shadow-sm h-100">
             <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <h6 class="mb-0 fw-bold">
                     <i class="bi bi-grid-3x3-gap-fill text-danger me-2"></i> Матрица рисков: «Патология × Фаза лактации (DIM)»
                 </h6>
-                <span class="badge bg-light text-muted border">Критические точки стада</span>
+                <span class="small text-muted">Критические точки по периодам лактации</span>
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
@@ -1141,37 +1104,33 @@
     </div>
 </div>
 
-<!-- Ряд 4 графиков: Патологический профиль по системам органов + Экономический ущерб по категориям скота -->
+<!-- Ряд 4 графиков: Патологический профиль по системам органов + Структура финансовых потерь (BYN) -->
 <div class="row g-3 mb-4">
     <!-- Патологический профиль (По системам органов) -->
     <div class="col-lg-6">
         <div class="card shadow-sm h-100">
             <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                <h6 class="mb-0 fw-bold"><i class="bi bi-heart-pulse-fill text-danger me-2"></i> Профиль заболеваемости (По системам органов)</h6>
-                <span class="badge bg-light text-muted border">8 анатомических групп</span>
+                <h6 class="mb-0 fw-bold"><i class="bi bi-heart-pulse-fill text-danger me-2"></i> Профиль заболеваемости (по системам органов)</h6>
+                <span class="small text-muted">{{ d.kpi.pathology_group_count or 9 }} анатомических групп</span>
             </div>
             <div class="card-body">
-                <div class="chart-box">
+                <div class="chart-box" style="height: 300px;">
                     <canvas id="pathologyChart"></canvas>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Экономический балансовый ущерб по категориям в BYN -->
+    <!-- Структура финансовых потерь и компенсации (BYN) — без дублирования ПВГ -->
     <div class="col-lg-6">
-        <div class="card shadow-sm h-100 border-warning-subtle">
-            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                <h6 class="mb-0 fw-bold text-dark"><i class="bi bi-currency-exchange text-warning me-2"></i> Структура ущерба по группам скота (BYN)</h6>
-                <span class="badge bg-warning-subtle text-dark border border-warning-subtle">Всего: {{ "{:,.0f}".format(d.kpi.total_loss_byn or 0).replace(',', ' ') }} BYN</span>
+        <div class="card shadow-sm h-100">
+            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h6 class="mb-0 fw-bold text-dark"><i class="bi bi-currency-exchange text-warning me-2"></i> Баланс финансовых потерь и компенсации (BYN)</h6>
+                <span class="small fw-semibold text-danger">Чистый ущерб: {{ "{:,.0f}".format(d.kpi.net_economic_loss_byn or 0).replace(',', ' ') }} BYN</span>
             </div>
             <div class="card-body">
-                <div class="chart-box">
+                <div class="chart-box" style="height: 300px;">
                     <canvas id="economicsChart"></canvas>
-                </div>
-                <div class="d-flex justify-content-center gap-4 text-center mt-2 small text-muted">
-                    <span><i class="bi bi-square-fill text-danger"></i> Падёж</span>
-                    <span><i class="bi bi-square-fill text-primary"></i> Выбраковка</span>
                 </div>
             </div>
         </div>
@@ -1341,7 +1300,7 @@
         <h6 class="mb-0 fw-bold">
             <i class="bi bi-shield-shaded text-danger me-2"></i> Сводная сравнительная матрица биобезопасности и потерь по фермам / МТФ
         </h6>
-        <span class="badge bg-light text-muted border">ОАО «Новая Припять»</span>
+        <span class="badge bg-light text-muted border">{{ org_name }}</span>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">
@@ -1493,11 +1452,13 @@
                                 </a>
                             </div>
                         </td>
+                        {% set m_warn = d.kpi.matrix_warn_pct if d.kpi.matrix_warn_pct is defined else 15 %}
+                        {% set m_crit = d.kpi.matrix_crit_pct if d.kpi.matrix_crit_pct is defined else 25 %}
                         {% for cell in fp.cells %}
-                        <td class="text-center {% if cell.pct >= 25 %}bg-danger-subtle{% elif cell.pct >= 15 %}bg-warning-subtle{% endif %}">
+                        <td class="text-center {% if cell.pct >= m_crit %}bg-danger-subtle{% elif cell.pct >= m_warn %}bg-warning-subtle{% endif %}">
                             {% if cell.count > 0 %}
                             <a href="javascript:void(0)" onclick="drillToCows({farm: '{{ fp.farm }}', pathology_system: '{{ cell.system }}'})" class="drilldown-link d-block" title="{{ fp.farm }} — {{ cell.system }}: {{ cell.count }} гол. ({{ cell.pct }}%)">
-                                <span class="fw-bold {% if cell.pct >= 25 %}text-danger{% elif cell.pct >= 15 %}text-dark{% else %}text-primary{% endif %}">{{ cell.pct }}%</span>
+                                <span class="fw-bold {% if cell.pct >= m_crit %}text-danger{% elif cell.pct >= m_warn %}text-dark{% else %}text-primary{% endif %}">{{ cell.pct }}%</span>
                                 <span class="text-muted d-block" style="font-size: 0.72rem;">{{ cell.count }} гол.</span>
                             </a>
                             {% else %}
@@ -1594,7 +1555,7 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/chart.umd.js"></script>
 <script>
 function showDashboardSkeleton() {
     const content = document.getElementById('dashboard-content');
@@ -1602,7 +1563,7 @@ function showDashboardSkeleton() {
     if (content && skeleton) {
         content.classList.add('d-none');
         skeleton.classList.remove('d-none');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        window.scrollTo(0, 0);
     }
 }
 
@@ -1653,162 +1614,269 @@ $(document).ready(function() {
     });
 
     Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    Chart.defaults.color = '#64748b';
-    Chart.defaults.animation = { duration: 200 };
+    Chart.defaults.font.size = 12;
+    Chart.defaults.color = '#475569';
+    Chart.defaults.animation = false;
     if (Chart.defaults.transitions && Chart.defaults.transitions.active) {
-        Chart.defaults.transitions.active.animation = { duration: 100 };
+        Chart.defaults.transitions.active.animation = { duration: 0 };
     }
 
-    const deferredCharts = [];
+    const PALETTE = {
+        death: '#E11D48',
+        culling: '#2563EB',
+        sanitary: '#F59E0B',
+        pathology: '#4F46E5',
+        success: '#10B981',
+        grid: '#f1f5f9'
+    };
+
+    const CLEAN_LEGEND = {
+        position: 'top',
+        align: 'start',
+        labels: {
+            usePointStyle: true,
+            pointStyle: 'circle',
+            boxWidth: 8,
+            boxHeight: 8,
+            padding: 14,
+            color: '#334155',
+            font: { size: 12, weight: '600' }
+        }
+    };
+
+    const FRIENDLY_TOOLTIP = {
+        backgroundColor: 'rgba(15, 23, 42, 0.94)',
+        titleColor: '#f8fafc',
+        bodyColor: '#e2e8f0',
+        footerColor: '#cbd5e1',
+        padding: 12,
+        cornerRadius: 8,
+        displayColors: true,
+        boxPadding: 5,
+        titleFont: { size: 12, weight: '700' },
+        bodyFont: { size: 12 },
+        footerFont: { size: 11, weight: '600' }
+    };
+
+    function fmtNum(n) {
+        return Math.round(n || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    }
+
+    function truncateLabel(str, maxLen) {
+        if (!str) return '';
+        return str.length > maxLen ? str.slice(0, maxLen - 1).trim() + '…' : str;
+    }
+
+    function showEmptyChart(canvasEl, text) {
+        if (!canvasEl || !canvasEl.parentElement) return;
+        const box = canvasEl.parentElement;
+        canvasEl.style.display = 'none';
+        if (!box.querySelector('.chart-empty-state')) {
+            const msg = document.createElement('div');
+            msg.className = 'chart-empty-state h-100 d-flex flex-column align-items-center justify-content-center text-muted small text-center px-3';
+            msg.innerHTML = '<i class="bi bi-bar-chart fs-3 opacity-50 mb-2"></i><span>' + (text || 'За выбранный период данных нет') + '</span>';
+            box.appendChild(msg);
+        }
+    }
+
     function queueChartInit(fn) {
-        deferredCharts.push(fn);
+        try { fn(); } catch (err) { console.error(err); }
     }
 
-    // 1. Помесячный тренд (12 месяцев) — рисуем сразу
-    const trendCtx = document.getElementById('trendChart');
-    if (trendCtx) {
+    // 1. Помесячный тренд (12 месяцев)
+    queueChartInit(function() {
+        const trendCtx = document.getElementById('trendChart');
+        if (!trendCtx) return;
+        const trendLabels = {{ d.charts.trend.labels | tojson }};
+        const trendDatasets = {{ d.charts.trend.datasets | tojson }};
+        const hasTrendData = trendDatasets.some(ds => (ds.data || []).some(v => v > 0));
+        if (!hasTrendData) {
+            showEmptyChart(trendCtx, 'За последние 12 месяцев выбытий не зарегистрировано');
+            return;
+        }
         new Chart(trendCtx, {
             type: 'line',
-            data: {
-                labels: {{ d.charts.trend.labels | tojson }},
-                datasets: {{ d.charts.trend.datasets | tojson }}
-            },
+            data: { labels: trendLabels, datasets: trendDatasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
-                    legend: { position: 'top' },
-                    tooltip: { padding: 10, cornerRadius: 8 }
+                    legend: CLEAN_LEGEND,
+                    tooltip: {
+                        ...FRIENDLY_TOOLTIP,
+                        callbacks: {
+                            label: function(ctx) {
+                                return ` ${ctx.dataset.label}: ${fmtNum(ctx.raw)} гол.`;
+                            },
+                            footer: function(items) {
+                                const sum = items.reduce((acc, it) => acc + (it.raw || 0), 0);
+                                return `Всего за месяц: ${fmtNum(sum)} гол.`;
+                            }
+                        }
+                    }
                 },
                 scales: {
-                    y: { beginAtZero: true, grid: { color: '#f1f5f9' } },
-                    x: { grid: { display: false } }
+                    y: {
+                        beginAtZero: true,
+                        ticks: { precision: 0 },
+                        grid: { color: PALETTE.grid },
+                        border: { display: false }
+                    },
+                    x: {
+                        grid: { display: false },
+                        border: { display: false }
+                    }
                 }
             }
         });
-    }
+    });
 
-    // График 1B: Структура репродуктивных потерь (Doughnut) — рисуем сразу
-    const reproStructCtx = document.getElementById('reproductionStructureChart');
-    if (reproStructCtx) {
+    // График 1B: Сроки стельности выбывших коров (Doughnut)
+    queueChartInit(function() {
+        const reproStructCtx = document.getElementById('reproductionStructureChart');
+        if (!reproStructCtx) return;
         const rLabels = {{ (d.reproduction.charts.structure.labels if d.reproduction and d.reproduction.charts else []) | tojson }};
         const rData = {{ (d.reproduction.charts.structure.data if d.reproduction and d.reproduction.charts else []) | tojson }};
         const rColors = {{ (d.reproduction.charts.structure.colors if d.reproduction and d.reproduction.charts else []) | tojson }};
         const rTotal = rData.reduce((a, b) => a + b, 0);
 
+        if (rTotal === 0) {
+            showEmptyChart(reproStructCtx, 'За выбранный период выбытия стельных коров нет');
+            return;
+        }
         new Chart(reproStructCtx, {
             type: 'doughnut',
             data: {
-                labels: rTotal > 0 ? rLabels : ['Нет выбывших стельных коров'],
+                labels: rLabels,
                 datasets: [{
-                    data: rTotal > 0 ? rData : [1],
-                    backgroundColor: rTotal > 0 ? rColors : ['#E2E8F0'],
-                    borderWidth: 2
+                    data: rData,
+                    backgroundColor: rColors,
+                    borderColor: '#ffffff',
+                    borderWidth: 2,
+                    hoverOffset: 6
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                cutout: '64%',
                 plugins: {
-                    legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+                    legend: {
+                        position: 'right',
+                        labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 12, font: { size: 11 } }
+                    },
                     tooltip: {
+                        ...FRIENDLY_TOOLTIP,
                         callbacks: {
                             label: function(context) {
-                                if (rTotal === 0) return ' Случаев не зарегистрировано';
                                 const val = context.raw || 0;
-                                const pct = rTotal > 0 ? ((val / rTotal) * 100).toFixed(1) : 0;
-                                return ` ${context.label}: ${val} гол. (${pct}%)`;
+                                const pct = ((val / rTotal) * 100).toFixed(1);
+                                return ` ${context.label}: ${fmtNum(val)} гол. (${pct}%)`;
                             }
                         }
                     }
-                },
-                cutout: '60%'
+                }
             }
         });
-    }
+    });
 
-    // График: Выбытие стельных коров по МТФ: Падёж vs Выбраковка/Убой (Bar)
+    // График 1C: Топ причин выбытия стельных коров (Horizontal Bar, без дублирования таблицы по фермам)
     queueChartInit(function() {
-    const reproFarmCtx = document.getElementById('reproductionFarmsChart');
-    if (reproFarmCtx) {
-        const rfLabels = {{ (d.reproduction.charts.farms.labels if d.reproduction and d.reproduction.charts else []) | tojson }};
-        const rfDeath = {{ (d.reproduction.charts.farms.pregnant_death if d.reproduction and d.reproduction.charts else []) | tojson }};
-        const rfCulling = {{ (d.reproduction.charts.farms.pregnant_culling if d.reproduction and d.reproduction.charts else []) | tojson }};
+        const reproReasonsCtx = document.getElementById('reproductionReasonsChart');
+        if (!reproReasonsCtx) return;
+        const rrRawLabels = {{ (d.reproduction.charts.reasons.labels if d.reproduction and d.reproduction.charts else []) | tojson }};
+        const rrData = {{ (d.reproduction.charts.reasons.data if d.reproduction and d.reproduction.charts else []) | tojson }};
+        const rrTotal = rrData.reduce((a, b) => a + b, 0);
 
-        new Chart(reproFarmCtx, {
+        if (rrTotal === 0) {
+            showEmptyChart(reproReasonsCtx, 'Причины выбытия стельных за период отсутствуют');
+            return;
+        }
+
+        new Chart(reproReasonsCtx, {
             type: 'bar',
             data: {
-                labels: rfLabels,
-                datasets: [
-                    {
-                        label: 'Падёж стельных (гол)',
-                        data: rfDeath,
-                        backgroundColor: '#EF4444',
-                        borderRadius: 4
-                    },
-                    {
-                        label: 'Выбраковка и сан. убой стельных (гол)',
-                        data: rfCulling,
-                        backgroundColor: '#2563EB',
-                        borderRadius: 4
-                    }
-                ]
+                labels: rrRawLabels.map(l => truncateLabel(l, 28)),
+                datasets: [{
+                    label: 'Стельных голов',
+                    data: rrData,
+                    backgroundColor: PALETTE.death,
+                    borderRadius: 6,
+                    barPercentage: 0.68
+                }]
             },
             options: {
+                indexAxis: 'y',
                 responsive: true,
                 maintainAspectRatio: false,
                 onClick: function(e, elements) {
                     if (elements && elements.length > 0) {
-                        const index = elements[0].index;
-                        const datasetIndex = elements[0].datasetIndex;
-                        const farmName = this.data.labels[index];
-                        const dsLabel = (this.data.datasets[datasetIndex].label || '').toLowerCase();
-                        const cat = dsLabel.includes('падёж') ? 'падёж' : 'брак';
-                        drillToCows({ farm: farmName, repro_filter: 'pregnant', category: cat });
+                        const rawReason = rrRawLabels[elements[0].index];
+                        if (rawReason) drillToCows({ repro_filter: 'pregnant', reason: rawReason });
                     }
                 },
                 onHover: function(e, elements) {
                     e.native.target.style.cursor = (elements && elements.length) ? 'pointer' : 'default';
                 },
                 plugins: {
-                    legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                    legend: { display: false },
                     tooltip: {
+                        ...FRIENDLY_TOOLTIP,
                         callbacks: {
-                            footer: function(tooltipItems) {
-                                let sum = 0;
-                                tooltipItems.forEach(function(item) { sum += (item.raw || 0); });
-                                return 'Всего выбыло стельных: ' + sum + ' гол. (кликните для перехода)';
+                            title: function(items) {
+                                return items.length ? rrRawLabels[items[0].dataIndex] : '';
+                            },
+                            label: function(ctx) {
+                                const val = ctx.raw || 0;
+                                const pct = ((val / rrTotal) * 100).toFixed(1);
+                                return ` Выбыло: ${fmtNum(val)} гол. (${pct}%)`;
+                            },
+                            afterLabel: function() {
+                                return 'Кликните для перехода к записям';
                             }
                         }
                     }
                 },
                 scales: {
-                    x: { stacked: true, grid: { display: false } },
-                    y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#f1f5f9' } }
+                    x: {
+                        beginAtZero: true,
+                        ticks: { precision: 0 },
+                        grid: { color: PALETTE.grid },
+                        border: { display: false }
+                    },
+                    y: {
+                        grid: { display: false },
+                        border: { display: false }
+                    }
                 }
             }
         });
-    }
     });
 
     // График: Причины мертворождений и абортов (Horizontal Bar)
     queueChartInit(function() {
-    const sbCausesCtx = document.getElementById('stillbirthCausesChart');
-    if (sbCausesCtx) {
-        const sbCausesLabels = {{ (d.reproduction.stillbirth_profile.causes_labels if d.reproduction and d.reproduction.stillbirth_profile else []) | tojson }};
+        const sbCausesCtx = document.getElementById('stillbirthCausesChart');
+        if (!sbCausesCtx) return;
+        const sbCausesRaw = {{ (d.reproduction.stillbirth_profile.causes_labels if d.reproduction and d.reproduction.stillbirth_profile else []) | tojson }};
         const sbCausesData = {{ (d.reproduction.stillbirth_profile.causes_data if d.reproduction and d.reproduction.stillbirth_profile else []) | tojson }};
         const sbTotal = sbCausesData.reduce((a, b) => a + b, 0);
+
+        if (sbTotal === 0) {
+            showEmptyChart(sbCausesCtx, 'За выбранный период мертворождений не зарегистрировано');
+            return;
+        }
 
         new Chart(sbCausesCtx, {
             type: 'bar',
             data: {
-                labels: sbTotal > 0 ? sbCausesLabels : ['Нет записей'],
+                labels: sbCausesRaw.map(l => truncateLabel(l, 28)),
                 datasets: [{
                     label: 'Случаев',
-                    data: sbTotal > 0 ? sbCausesData : [0],
-                    backgroundColor: '#EF4444',
-                    borderRadius: 4
+                    data: sbCausesData,
+                    backgroundColor: '#F43F5E',
+                    borderRadius: 6,
+                    barPercentage: 0.68
                 }]
             },
             options: {
@@ -1818,91 +1886,119 @@ $(document).ready(function() {
                 plugins: {
                     legend: { display: false },
                     tooltip: {
+                        ...FRIENDLY_TOOLTIP,
                         callbacks: {
+                            title: function(items) {
+                                return items.length ? sbCausesRaw[items[0].dataIndex] : '';
+                            },
                             label: function(ctx) {
                                 const val = ctx.raw || 0;
-                                const pct = sbTotal > 0 ? ((val / sbTotal) * 100).toFixed(1) : 0;
-                                return ` ${val} случаев (${pct}%)`;
+                                const pct = ((val / sbTotal) * 100).toFixed(1);
+                                return ` ${fmtNum(val)} случаев (${pct}%)`;
                             }
                         }
                     }
                 },
                 scales: {
-                    x: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#f1f5f9' } },
-                    y: { grid: { display: false } }
+                    x: {
+                        beginAtZero: true,
+                        ticks: { precision: 0 },
+                        grid: { color: PALETTE.grid },
+                        border: { display: false }
+                    },
+                    y: {
+                        grid: { display: false },
+                        border: { display: false }
+                    }
                 }
             }
         });
-    }
     });
 
     // График: Мертворождения по группам матерей (Doughnut)
     queueChartInit(function() {
-    const sbMothersCtx = document.getElementById('stillbirthMothersChart');
-    if (sbMothersCtx) {
+        const sbMothersCtx = document.getElementById('stillbirthMothersChart');
+        if (!sbMothersCtx) return;
         const sbMgLabels = {{ (d.reproduction.stillbirth_profile.mother_groups_labels if d.reproduction and d.reproduction.stillbirth_profile else []) | tojson }};
         const sbMgData = {{ (d.reproduction.stillbirth_profile.mother_groups_data if d.reproduction and d.reproduction.stillbirth_profile else []) | tojson }};
         const sbMgTotal = sbMgData.reduce((a, b) => a + b, 0);
 
+        if (sbMgTotal === 0) {
+            showEmptyChart(sbMothersCtx, 'За выбранный период данных по группам матерей нет');
+            return;
+        }
+
         new Chart(sbMothersCtx, {
             type: 'doughnut',
             data: {
-                labels: sbMgTotal > 0 ? sbMgLabels : ['Нет записей'],
+                labels: sbMgLabels.map(l => truncateLabel(l, 28)),
                 datasets: [{
-                    data: sbMgTotal > 0 ? sbMgData : [1],
-                    backgroundColor: ['#2563EB', '#F59E0B', '#10B981', '#EC4899', '#8B5CF6'],
-                    borderWidth: 2
+                    data: sbMgData,
+                    backgroundColor: ['#2563EB', '#F59E0B', '#10B981', '#8B5CF6', '#EC4899'],
+                    borderColor: '#ffffff',
+                    borderWidth: 2,
+                    hoverOffset: 6
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                cutout: '64%',
                 plugins: {
-                    legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+                    legend: {
+                        position: 'right',
+                        labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 12, font: { size: 11 } }
+                    },
                     tooltip: {
+                        ...FRIENDLY_TOOLTIP,
                         callbacks: {
+                            title: function(items) {
+                                return items.length ? sbMgLabels[items[0].dataIndex] : '';
+                            },
                             label: function(ctx) {
-                                if (sbMgTotal === 0) return ' Нет записей';
                                 const val = ctx.raw || 0;
                                 const pct = ((val / sbMgTotal) * 100).toFixed(1);
-                                return ` ${ctx.label}: ${val} (${pct}%)`;
+                                return ` ${fmtNum(val)} случаев (${pct}%)`;
                             }
                         }
                     }
-                },
-                cutout: '60%'
+                }
             }
         });
-    }
     });
 
     // 2. Доли категорий (Doughnut)
     queueChartInit(function() {
-    const catCtx = document.getElementById('categoryDoughnut');
-    if (catCtx) {
+        const catCtx = document.getElementById('categoryDoughnut');
+        if (!catCtx) return;
         const catLabels = {{ d.charts.categories.labels | tojson }};
         const catData = {{ d.charts.categories.data | tojson }};
-        const catColors = {{ d.charts.categories.colors | tojson }};
         const totalCases = catData.reduce((a, b) => a + b, 0);
+
+        if (totalCases === 0) {
+            showEmptyChart(catCtx, 'За выбранный период выбытий нет');
+            return;
+        }
 
         new Chart(catCtx, {
             type: 'doughnut',
             data: {
-                labels: totalCases > 0 ? catLabels : ['Нет данных'],
+                labels: catLabels,
                 datasets: [{
-                    data: totalCases > 0 ? catData : [1],
-                    backgroundColor: totalCases > 0 ? catColors : ['#E2E8F0'],
+                    data: catData,
+                    backgroundColor: [PALETTE.death, PALETTE.culling, PALETTE.sanitary],
+                    borderColor: '#ffffff',
                     borderWidth: 2,
-                    hoverOffset: totalCases > 0 ? 4 : 0
+                    hoverOffset: 6
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                cutout: '64%',
                 onClick: function(e, elements) {
-                    if (elements && elements.length > 0 && totalCases > 0) {
-                        const index = elements[0].index;
-                        const label = (this.data.labels[index] || '').toLowerCase();
+                    if (elements && elements.length > 0) {
+                        const label = (this.data.labels[elements[0].index] || '').toLowerCase();
                         let cat = '';
                         if (label.includes('падёж') || label.includes('падеж')) cat = 'падёж';
                         else if (label.includes('выбраков')) cat = 'выбраковка';
@@ -1911,163 +2007,218 @@ $(document).ready(function() {
                     }
                 },
                 onHover: function(e, elements) {
-                    e.native.target.style.cursor = (elements && elements.length && totalCases > 0) ? 'pointer' : 'default';
+                    e.native.target.style.cursor = (elements && elements.length) ? 'pointer' : 'default';
                 },
                 plugins: {
-                    legend: { position: 'bottom' },
+                    legend: {
+                        position: 'bottom',
+                        labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 8, padding: 12, font: { size: 12 } }
+                    },
                     tooltip: {
+                        ...FRIENDLY_TOOLTIP,
                         callbacks: {
                             label: function(context) {
-                                if (totalCases === 0) return ' Нет данных за период';
                                 const val = context.raw || 0;
-                                const pct = totalCases > 0 ? ((val / totalCases) * 100).toFixed(1) : 0;
-                                return ` ${context.label}: ${val} гол. (${pct}%) — кликните для журнала`;
+                                const pct = ((val / totalCases) * 100).toFixed(1);
+                                return ` ${context.label}: ${fmtNum(val)} гол. (${pct}%)`;
+                            },
+                            afterLabel: function() {
+                                return 'Кликните для перехода в журнал';
                             }
                         }
                     }
-                },
-                cutout: '65%'
+                }
             }
         });
-    }
     });
 
-    // 3. Комплексный профиль лактации (Фазы DIM)
+    // 3. Фазы лактации (DIM)
     queueChartInit(function() {
-    const dimCompCtx = document.getElementById('dimComprehensiveChart') || document.getElementById('lactationPhaseChart');
-    if (dimCompCtx) {
+        const dimCompCtx = document.getElementById('dimComprehensiveChart');
+        if (!dimCompCtx) return;
+        const rawPhases = {{ d.charts.dim_comprehensive.labels | tojson }};
+        const shortPhases = ['Новотел 0–15 дн.', 'Новотел 16–30 дн.', 'Раздой 31–100', 'Середина 101–200', 'Спад 201–305+', 'Сухостой'];
+        const deathArr = {{ d.charts.dim_comprehensive.death_data | tojson }};
+        const cullArr = {{ d.charts.dim_comprehensive.culling_data | tojson }};
+        const hasDim = deathArr.some(v => v > 0) || cullArr.some(v => v > 0);
+
+        if (!hasDim) {
+            showEmptyChart(dimCompCtx, 'Нет записей с указанными днями лактации за период');
+            return;
+        }
+
         new Chart(dimCompCtx, {
             type: 'bar',
             data: {
-                labels: {{ d.charts.dim_comprehensive.labels | tojson }},
+                labels: shortPhases,
                 datasets: [
                     {
                         label: 'Падёж',
-                        data: {{ d.charts.dim_comprehensive.death_data | tojson }},
-                        backgroundColor: '#EF4444',
-                        borderRadius: 4
+                        data: deathArr,
+                        backgroundColor: PALETTE.death,
+                        borderRadius: 5,
+                        barPercentage: 0.65
                     },
                     {
-                        label: 'Выбраковка / санбрак',
-                        data: {{ d.charts.dim_comprehensive.culling_data | tojson }},
-                        backgroundColor: '#3B82F6',
-                        borderRadius: 4
+                        label: 'Выбраковка и санбрак',
+                        data: cullArr,
+                        backgroundColor: PALETTE.culling,
+                        borderRadius: 5,
+                        barPercentage: 0.65
                     }
                 ]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
                 onClick: function(e, elements) {
                     if (elements && elements.length > 0) {
-                        const index = elements[0].index;
-                        const phase = this.data.labels[index];
-                        const datasetIndex = elements[0].datasetIndex;
-                        const dsLabel = (this.data.datasets[datasetIndex].label || '').toLowerCase();
-                        let cat = '';
-                        if (dsLabel.includes('падёж')) cat = 'падёж';
-                        else if (dsLabel.includes('выбраков')) cat = 'брак';
+                        const phase = rawPhases[elements[0].index];
+                        const dsLabel = (this.data.datasets[elements[0].datasetIndex].label || '').toLowerCase();
+                        const cat = dsLabel.includes('падёж') ? 'падёж' : 'брак';
                         drillToCows({ lactation_phase: phase, category: cat });
                     }
                 },
                 onHover: function(e, elements) {
                     e.native.target.style.cursor = (elements && elements.length) ? 'pointer' : 'default';
                 },
-                plugins: { legend: { position: 'top' } },
-                scales: {
-                    x: { stacked: true, grid: { display: false } },
-                    y: { stacked: true, beginAtZero: true, grid: { color: '#f1f5f9' } }
-                }
-            }
-        });
-    }
-    });
-
-    // 4. Продуктивность выбывших коров (Удой за лактацию, кг)
-    queueChartInit(function() {
-    const milkProdCtx = document.getElementById('milkProductivityChart');
-    if (milkProdCtx) {
-        new Chart(milkProdCtx, {
-            type: 'bar',
-            data: {
-                labels: {{ d.charts.milk_productivity.labels | tojson }},
-                datasets: [
-                    {
-                        label: 'Падёж (потеря лидеров)',
-                        data: {{ d.charts.milk_productivity.death_data | tojson }},
-                        backgroundColor: '#DC2626',
-                        borderRadius: 4
-                    },
-                    {
-                        label: 'Выбраковка',
-                        data: {{ d.charts.milk_productivity.culling_data | tojson }},
-                        backgroundColor: '#2563EB',
-                        borderRadius: 4
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
                 plugins: {
-                    legend: { position: 'top' },
+                    legend: CLEAN_LEGEND,
                     tooltip: {
+                        ...FRIENDLY_TOOLTIP,
                         callbacks: {
+                            title: function(items) {
+                                return items.length ? rawPhases[items[0].dataIndex] : '';
+                            },
+                            label: function(ctx) {
+                                return ` ${ctx.dataset.label}: ${fmtNum(ctx.raw)} гол.`;
+                            },
                             footer: function(items) {
-                                let total = 0;
-                                items.forEach(function(it) { total += (it.raw || 0); });
-                                return 'Всего в когорте: ' + total + ' гол.';
+                                const sum = items.reduce((a, b) => a + (b.raw || 0), 0);
+                                return `Всего в фазе: ${fmtNum(sum)} гол. (клик для фильтра)`;
                             }
                         }
                     }
                 },
                 scales: {
-                    x: { stacked: true, grid: { display: false } },
-                    y: { stacked: true, beginAtZero: true, grid: { color: '#f1f5f9' } }
+                    x: { stacked: true, grid: { display: false }, border: { display: false } },
+                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, grid: { color: PALETTE.grid }, border: { display: false } }
                 }
             }
         });
-    }
     });
 
-    // 5. Половозрастные группы скота со стеком
+    // 4. Продуктивность выбывших коров (Удой за лактацию, кг)
     queueChartInit(function() {
-    const ageCtx = document.getElementById('ageGroupChart');
-    if (ageCtx) {
-        new Chart(ageCtx, {
+        const milkProdCtx = document.getElementById('milkProductivityChart');
+        if (!milkProdCtx) return;
+        const mLabels = {{ d.charts.milk_productivity.labels | tojson }};
+        const mDeath = {{ d.charts.milk_productivity.death_data | tojson }};
+        const mCull = {{ d.charts.milk_productivity.culling_data | tojson }};
+        if (!mDeath.some(v => v > 0) && !mCull.some(v => v > 0)) {
+            showEmptyChart(milkProdCtx, 'Нет данных о продуктивности коров за период');
+            return;
+        }
+
+        new Chart(milkProdCtx, {
             type: 'bar',
             data: {
-                labels: {{ d.charts.age_groups.labels | tojson }},
+                labels: mLabels,
                 datasets: [
                     {
-                        label: 'Падёж',
-                        data: {{ d.charts.age_groups.death_data | tojson }},
-                        backgroundColor: '#DC2626',
-                        borderRadius: 4
+                        label: 'Падёж (потеря генетики)',
+                        data: mDeath,
+                        backgroundColor: PALETTE.death,
+                        borderRadius: 5,
+                        barPercentage: 0.65
                     },
                     {
-                        label: 'Выбраковка',
-                        data: {{ d.charts.age_groups.culling_data | tojson }},
-                        backgroundColor: '#2563EB',
-                        borderRadius: 4
-                    },
-                    {
-                        label: 'Санбрак',
-                        data: {{ d.charts.age_groups.sanitary_data | tojson }},
-                        backgroundColor: '#D97706',
-                        borderRadius: 4
+                        label: 'Выбраковка и санбрак',
+                        data: mCull,
+                        backgroundColor: PALETTE.culling,
+                        borderRadius: 5,
+                        barPercentage: 0.65
                     }
                 ]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: CLEAN_LEGEND,
+                    tooltip: {
+                        ...FRIENDLY_TOOLTIP,
+                        callbacks: {
+                            label: function(ctx) {
+                                return ` ${ctx.dataset.label}: ${fmtNum(ctx.raw)} гол.`;
+                            },
+                            footer: function(items) {
+                                const total = items.reduce((a, b) => a + (b.raw || 0), 0);
+                                return 'Всего в когорте: ' + fmtNum(total) + ' гол.';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { stacked: true, grid: { display: false }, border: { display: false } },
+                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, grid: { color: PALETTE.grid }, border: { display: false } }
+                }
+            }
+        });
+    });
+
+    // 5. Половозрастные группы скота — горизонтальный стек (без длинных наклонных подписей!)
+    queueChartInit(function() {
+        const ageCtx = document.getElementById('ageGroupChart');
+        if (!ageCtx) return;
+        const rawAgeLabels = {{ d.charts.age_groups.labels | tojson }};
+        const ageDeath = {{ d.charts.age_groups.death_data | tojson }};
+        const ageCull = {{ d.charts.age_groups.culling_data | tojson }};
+        const ageSan = {{ d.charts.age_groups.sanitary_data | tojson }};
+        if (!rawAgeLabels.length || (!ageDeath.some(v => v > 0) && !ageCull.some(v => v > 0) && !ageSan.some(v => v > 0))) {
+            showEmptyChart(ageCtx, 'За выбранный период выбытий по ПВГ нет');
+            return;
+        }
+
+        new Chart(ageCtx, {
+            type: 'bar',
+            data: {
+                labels: rawAgeLabels.map(l => truncateLabel(l, 26)),
+                datasets: [
+                    {
+                        label: 'Падёж',
+                        data: ageDeath,
+                        backgroundColor: PALETTE.death,
+                        borderRadius: 4,
+                        barPercentage: 0.72
+                    },
+                    {
+                        label: 'Выбраковка',
+                        data: ageCull,
+                        backgroundColor: PALETTE.culling,
+                        borderRadius: 4,
+                        barPercentage: 0.72
+                    },
+                    {
+                        label: 'Санбрак',
+                        data: ageSan,
+                        backgroundColor: PALETTE.sanitary,
+                        borderRadius: 4,
+                        barPercentage: 0.72
+                    }
+                ]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false, axis: 'y' },
                 onClick: function(e, elements) {
                     if (elements && elements.length > 0) {
-                        const index = elements[0].index;
-                        const datasetIndex = elements[0].datasetIndex;
-                        const ageGroup = this.data.labels[index];
-                        const dsLabel = (this.data.datasets[datasetIndex].label || '').toLowerCase();
+                        const ageGroup = rawAgeLabels[elements[0].index];
+                        const dsLabel = (this.data.datasets[elements[0].datasetIndex].label || '').toLowerCase();
                         let cat = '';
                         if (dsLabel.includes('падёж') || dsLabel.includes('падеж')) cat = 'падёж';
                         else if (dsLabel.includes('выбраков')) cat = 'выбраковка';
@@ -2079,111 +2230,117 @@ $(document).ready(function() {
                     e.native.target.style.cursor = (elements && elements.length) ? 'pointer' : 'default';
                 },
                 plugins: {
-                    legend: { position: 'top' },
+                    legend: CLEAN_LEGEND,
                     tooltip: {
+                        ...FRIENDLY_TOOLTIP,
                         callbacks: {
-                            afterLabel: function() {
-                                return 'Кликните для перехода в журнал';
+                            title: function(items) {
+                                return items.length ? rawAgeLabels[items[0].dataIndex] : '';
+                            },
+                            label: function(ctx) {
+                                return ` ${ctx.dataset.label}: ${fmtNum(ctx.raw)} гол.`;
+                            },
+                            footer: function(items) {
+                                const total = items.reduce((a, b) => a + (b.raw || 0), 0);
+                                return `Всего в группе: ${fmtNum(total)} гол. (клик для перехода)`;
                             }
                         }
                     }
                 },
                 scales: {
-                    x: { stacked: true, grid: { display: false } },
-                    y: { stacked: true, beginAtZero: true, grid: { color: '#f1f5f9' } }
+                    x: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, grid: { color: PALETTE.grid }, border: { display: false } },
+                    y: { stacked: true, grid: { display: false }, border: { display: false } }
                 }
             }
         });
-    }
     });
 
     // 6. Лактационный возраст и окупаемость коров
     queueChartInit(function() {
-    const longevityCtx = document.getElementById('longevityChart') || document.getElementById('lactationNumberChart');
-    if (longevityCtx) {
+        const longevityCtx = document.getElementById('longevityChart');
+        if (!longevityCtx) return;
+        const lLabels = {{ d.charts.longevity.labels | tojson }};
+        const lDeath = {{ d.charts.longevity.death_data | tojson }};
+        const lCull = {{ d.charts.longevity.culling_data | tojson }};
+        const lTotal = lDeath.reduce((a, b) => a + b, 0) + lCull.reduce((a, b) => a + b, 0);
+
+        if (lTotal === 0) {
+            showEmptyChart(longevityCtx, 'Нет данных по номерам лактаций за период');
+            return;
+        }
+
         new Chart(longevityCtx, {
             type: 'bar',
             data: {
-                labels: {{ d.charts.longevity.labels | tojson }},
+                labels: lLabels,
                 datasets: [
                     {
                         label: 'Падёж',
-                        data: {{ d.charts.longevity.death_data | tojson }},
-                        backgroundColor: '#EF4444',
-                        borderRadius: 4
-                    },
-                    {
-                        label: 'Выбраковка',
-                        data: {{ d.charts.longevity.culling_data | tojson }},
-                        backgroundColor: '#0284C7',
-                        borderRadius: 4
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { position: 'top' } },
-                scales: {
-                    x: { stacked: true, grid: { display: false } },
-                    y: { stacked: true, beginAtZero: true, grid: { color: '#f1f5f9' } }
-                }
-            }
-        });
-    }
-    });
-
-    // 6B. Сезонность выбытия скота (Зима / Весна / Лето / Осень)
-    queueChartInit(function() {
-    const seasonCtx = document.getElementById('seasonalityChart');
-    if (seasonCtx) {
-        new Chart(seasonCtx, {
-            type: 'bar',
-            data: {
-                labels: {{ d.charts.seasonality.labels | tojson }},
-                datasets: [
-                    {
-                        label: 'Падёж',
-                        data: {{ d.charts.seasonality.death_data | tojson }},
-                        backgroundColor: '#EF4444',
-                        borderRadius: 4
+                        data: lDeath,
+                        backgroundColor: PALETTE.death,
+                        borderRadius: 5,
+                        barPercentage: 0.62
                     },
                     {
                         label: 'Выбраковка и санбрак',
-                        data: {{ d.charts.seasonality.culling_data | tojson }},
-                        backgroundColor: '#3B82F6',
-                        borderRadius: 4
+                        data: lCull,
+                        backgroundColor: PALETTE.culling,
+                        borderRadius: 5,
+                        barPercentage: 0.62
                     }
                 ]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
                 plugins: {
-                    legend: { position: 'top' }
+                    legend: CLEAN_LEGEND,
+                    tooltip: {
+                        ...FRIENDLY_TOOLTIP,
+                        callbacks: {
+                            label: function(ctx) {
+                                return ` ${ctx.dataset.label}: ${fmtNum(ctx.raw)} гол.`;
+                            },
+                            footer: function(items) {
+                                const total = items.reduce((a, b) => a + (b.raw || 0), 0);
+                                const pct = ((total / lTotal) * 100).toFixed(1);
+                                return `Итого по лактации: ${fmtNum(total)} гол. (${pct}%)`;
+                            }
+                        }
+                    }
                 },
                 scales: {
-                    x: { stacked: true, grid: { display: false } },
-                    y: { stacked: true, beginAtZero: true, grid: { color: '#f1f5f9' } }
+                    x: { stacked: true, grid: { display: false }, border: { display: false } },
+                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, grid: { color: PALETTE.grid }, border: { display: false } }
                 }
             }
         });
-    }
     });
 
-    // 7. Патологический профиль (кликабельный для перехода к системе патологий)
+    // 7. Патологический профиль (кликабельный, горизонтальный)
     queueChartInit(function() {
-    const pathCtx = document.getElementById('pathologyChart');
-    if (pathCtx) {
+        const pathCtx = document.getElementById('pathologyChart');
+        if (!pathCtx) return;
+        const pRawLabels = {{ d.charts.pathology.labels | tojson }};
+        const pData = {{ d.charts.pathology.data | tojson }};
+        const pTotal = pData.reduce((a, b) => a + b, 0);
+
+        if (pTotal === 0) {
+            showEmptyChart(pathCtx, 'За выбранный период диагнозов не зарегистрировано');
+            return;
+        }
+
         new Chart(pathCtx, {
             type: 'bar',
             data: {
-                labels: {{ d.charts.pathology.labels | tojson }},
+                labels: pRawLabels.map(l => truncateLabel(l, 26)),
                 datasets: [{
                     label: 'Случаев',
-                    data: {{ d.charts.pathology.data | tojson }},
-                    backgroundColor: '#6366F1',
-                    borderRadius: 6
+                    data: pData,
+                    backgroundColor: PALETTE.pathology,
+                    borderRadius: 6,
+                    barPercentage: 0.68
                 }]
             },
             options: {
@@ -2192,7 +2349,7 @@ $(document).ready(function() {
                 maintainAspectRatio: false,
                 onClick: function(e, elements) {
                     if (elements && elements.length > 0) {
-                        const sysName = this.data.labels[elements[0].index];
+                        const sysName = pRawLabels[elements[0].index];
                         if (sysName) drillToCows({ pathology_system: sysName });
                     }
                 },
@@ -2202,97 +2359,140 @@ $(document).ready(function() {
                 plugins: {
                     legend: { display: false },
                     tooltip: {
+                        ...FRIENDLY_TOOLTIP,
                         callbacks: {
+                            title: function(items) {
+                                return items.length ? pRawLabels[items[0].dataIndex] : '';
+                            },
+                            label: function(ctx) {
+                                const val = ctx.raw || 0;
+                                const pct = ((val / pTotal) * 100).toFixed(1);
+                                return ` Случаев: ${fmtNum(val)} гол. (${pct}%)`;
+                            },
                             afterLabel: function() {
-                                return 'Кликните для просмотра записей этой группы';
+                                return 'Кликните для перехода в журнал';
                             }
                         }
                     }
                 },
                 scales: {
-                    x: { beginAtZero: true, grid: { color: '#f1f5f9' } },
-                    y: { grid: { display: false } }
+                    x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: PALETTE.grid }, border: { display: false } },
+                    y: { grid: { display: false }, border: { display: false } }
                 }
             }
         });
-    }
     });
 
-    // 8. Экономический баланс (BYN)
+    // 8. Баланс финансовых потерь и компенсации (BYN) — уникальные компоненты без повтора ПВГ
     queueChartInit(function() {
-    const econCtx = document.getElementById('economicsChart');
-    if (econCtx) {
+        const econCtx = document.getElementById('economicsChart');
+        if (!econCtx) return;
+        const ebRawLabels = {{ d.charts.economics_breakdown.labels | tojson }};
+        const ebData = {{ d.charts.economics_breakdown.data | tojson }};
+        const ebColors = {{ d.charts.economics_breakdown.colors | tojson }};
+        if (!ebData.some(v => v > 0)) {
+            showEmptyChart(econCtx, 'Финансовые потери за выбранный период отсутствуют');
+            return;
+        }
+
         new Chart(econCtx, {
             type: 'bar',
             data: {
-                labels: {{ d.charts.economics_by_group.labels | tojson }},
-                datasets: [
-                    {
-                        label: 'Ущерб от падежа (BYN)',
-                        data: {{ d.charts.economics_by_group.death_data | tojson }},
-                        backgroundColor: '#DC2626',
-                        borderRadius: 4
-                    },
-                    {
-                        label: 'Ущерб от выбраковки (BYN)',
-                        data: {{ d.charts.economics_by_group.culling_data | tojson }},
-                        backgroundColor: '#2563EB',
-                        borderRadius: 4
-                    }
-                ]
+                labels: ebRawLabels.map(l => truncateLabel(l, 26)),
+                datasets: [{
+                    label: 'Сумма (BYN)',
+                    data: ebData,
+                    backgroundColor: ebColors,
+                    borderRadius: 6,
+                    barPercentage: 0.65
+                }]
             },
             options: {
+                indexAxis: 'y',
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { position: 'top' } },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        ...FRIENDLY_TOOLTIP,
+                        callbacks: {
+                            title: function(items) {
+                                return items.length ? ebRawLabels[items[0].dataIndex] : '';
+                            },
+                            label: function(ctx) {
+                                const isOffset = ctx.dataIndex === 4;
+                                return ` ${isOffset ? 'Возврат' : 'Потери'}: ${fmtNum(ctx.raw)} BYN`;
+                            }
+                        }
+                    }
+                },
                 scales: {
-                    x: { stacked: true, grid: { display: false } },
-                    y: { stacked: true, beginAtZero: true, grid: { color: '#f1f5f9' } }
+                    x: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return fmtNum(value) + ' BYN';
+                            }
+                        },
+                        grid: { color: PALETTE.grid },
+                        border: { display: false }
+                    },
+                    y: { grid: { display: false }, border: { display: false } }
                 }
             }
         });
-    }
     });
 
-    // 9. Фермы со стеком категорий (для администратора)
+    // 9. Сравнение ферм со стеком категорий (для администратора)
     {% if user_type == 'admin' %}
     queueChartInit(function() {
-    const farmCtx = document.getElementById('farmBarChart');
-    if (farmCtx) {
+        const farmCtx = document.getElementById('farmBarChart');
+        if (!farmCtx) return;
+        const fLabels = {{ d.charts.farms.labels | tojson }};
+        const fDeath = {{ d.charts.farms.death_data | tojson }};
+        const fCull = {{ d.charts.farms.culling_data | tojson }};
+        const fSan = {{ d.charts.farms.sanitary_data | tojson }};
+        if (!fLabels.length || (!fDeath.some(v => v > 0) && !fCull.some(v => v > 0) && !fSan.some(v => v > 0))) {
+            showEmptyChart(farmCtx, 'За выбранный период данных по фермам нет');
+            return;
+        }
+
         new Chart(farmCtx, {
             type: 'bar',
             data: {
-                labels: {{ d.charts.farms.labels | tojson }},
+                labels: fLabels,
                 datasets: [
                     {
                         label: 'Падёж',
-                        data: {{ d.charts.farms.death_data | tojson }},
-                        backgroundColor: '#DC2626',
-                        borderRadius: 4
+                        data: fDeath,
+                        backgroundColor: PALETTE.death,
+                        borderRadius: 5,
+                        barPercentage: 0.55
                     },
                     {
                         label: 'Выбраковка',
-                        data: {{ d.charts.farms.culling_data | tojson }},
-                        backgroundColor: '#2563EB',
-                        borderRadius: 4
+                        data: fCull,
+                        backgroundColor: PALETTE.culling,
+                        borderRadius: 5,
+                        barPercentage: 0.55
                     },
                     {
                         label: 'Санитарный брак',
-                        data: {{ d.charts.farms.sanitary_data | tojson }},
-                        backgroundColor: '#D97706',
-                        borderRadius: 4
+                        data: fSan,
+                        backgroundColor: PALETTE.sanitary,
+                        borderRadius: 5,
+                        barPercentage: 0.55
                     }
                 ]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
                 onClick: function(e, elements) {
                     if (elements && elements.length > 0) {
-                        const index = elements[0].index;
-                        const datasetIndex = elements[0].datasetIndex;
-                        const farmName = this.data.labels[index];
-                        const dsLabel = (this.data.datasets[datasetIndex].label || '').toLowerCase();
+                        const farmName = this.data.labels[elements[0].index];
+                        const dsLabel = (this.data.datasets[elements[0].datasetIndex].label || '').toLowerCase();
                         let cat = '';
                         if (dsLabel.includes('падёж')) cat = 'падёж';
                         else if (dsLabel.includes('выбраков')) cat = 'выбраковка';
@@ -2304,48 +2504,28 @@ $(document).ready(function() {
                     e.native.target.style.cursor = (elements && elements.length) ? 'pointer' : 'default';
                 },
                 plugins: {
-                    legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                    legend: CLEAN_LEGEND,
                     tooltip: {
+                        ...FRIENDLY_TOOLTIP,
                         callbacks: {
+                            label: function(ctx) {
+                                return ` ${ctx.dataset.label}: ${fmtNum(ctx.raw)} гол.`;
+                            },
                             footer: function(items) {
-                                let sum = 0;
-                                items.forEach(function(it) { sum += (it.raw || 0); });
-                                return 'Всего по ферме: ' + sum + ' гол. (кликните для перехода)';
+                                const sum = items.reduce((a, b) => a + (b.raw || 0), 0);
+                                return 'Всего по ферме: ' + fmtNum(sum) + ' гол. (клик для перехода)';
                             }
                         }
                     }
                 },
                 scales: {
-                    y: { stacked: true, beginAtZero: true, grid: { color: '#f1f5f9' } },
-                    x: { stacked: true, grid: { display: false } }
+                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, grid: { color: PALETTE.grid }, border: { display: false } },
+                    x: { stacked: true, grid: { display: false }, border: { display: false } }
                 }
             }
         });
-    }
     });
     {% endif %}
-
-    // Поэтапная инициализация графиков пакетами по 2 на кадр (без подвисания UI)
-    function flushChartQueue() {
-        var batch = deferredCharts.splice(0, 2);
-        for (var i = 0; i < batch.length; i++) {
-            try { batch[i](); } catch (err) { console.error(err); }
-        }
-        if (deferredCharts.length > 0) {
-            if (window.requestAnimationFrame) {
-                window.requestAnimationFrame(flushChartQueue);
-            } else {
-                setTimeout(flushChartQueue, 16);
-            }
-        }
-    }
-    if (deferredCharts.length > 0) {
-        if (window.requestAnimationFrame) {
-            window.requestAnimationFrame(flushChartQueue);
-        } else {
-            setTimeout(flushChartQueue, 16);
-        }
-    }
 });
 
 // Обработчик сохранения норм и порогов прямо с дашборда
@@ -2358,6 +2538,25 @@ function saveDashboardThresholds(event) {
     if (form && !form.checkValidity()) {
         form.reportValidity();
         return;
+    }
+
+    const thresholdTriples = [
+        ['Выбытие новотельных (0–30 DIM)', 'norm_fresh_cow_disposal', 'warn_fresh_cow_disposal', 'crit_fresh_cow_disposal'],
+        ['Выбраковка первотёлок', 'norm_first_lactation_culling', 'warn_first_lactation_culling', 'crit_first_lactation_culling'],
+        ['Общая летальность (Падёж)', 'norm_mortality_rate', 'warn_mortality_rate', 'crit_mortality_rate'],
+        ['Болезни конечностей', 'norm_locomotor_disorders', 'warn_locomotor_disorders', 'crit_locomotor_disorders'],
+        ['Заболевания вымени', 'norm_mastitis_disorders', 'warn_mastitis_disorders', 'crit_mastitis_disorders']
+    ];
+    for (const [label, kn, kw, kc] of thresholdTriples) {
+        const vn = parseFloat(form.querySelector(`[name="${kn}"]`)?.value);
+        const vw = parseFloat(form.querySelector(`[name="${kw}"]`)?.value);
+        const vc = parseFloat(form.querySelector(`[name="${kc}"]`)?.value);
+        if (!(vn <= vw && vw <= vc)) {
+            alertBox.className = 'alert alert-danger d-flex align-items-center gap-2 mb-3';
+            alertBox.innerHTML = `<i class="bi bi-exclamation-triangle-fill fs-5"></i><div>Ошибка порогов «${label}»: должно выполняться Норма ≤ Внимание ≤ Критично (${vn} ≤ ${vw} ≤ ${vc}).</div>`;
+            alertBox.classList.remove('d-none');
+            return;
+        }
     }
 
     submitBtn.disabled = true;

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Добавление записи - Учёт выбытия и мертворождений КРС{% endblock %}
+{% block title %}Добавление записи - {{ org_name }}{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
@@ -48,9 +48,9 @@
                                         <label for="category" class="form-label fw-semibold">Вид выбытия *</label>
                                         <select class="form-select border-primary-subtle" id="category" name="category" required>
                                             <option value="">Выберите вид...</option>
-                                            <option value="падёж">Падёж</option>
-                                            <option value="выбраковка">Выбраковка</option>
-                                            <option value="санитарный">Санитарный брак</option>
+                                            <option value="падёж" {% if form_data and form_data.get('category') == 'падёж' %}selected{% endif %}>Падёж</option>
+                                            <option value="выбраковка" {% if form_data and form_data.get('category') == 'выбраковка' %}selected{% endif %}>Выбраковка</option>
+                                            <option value="санитарный" {% if form_data and form_data.get('category') == 'санитарный' %}selected{% endif %}>Санитарный брак</option>
                                         </select>
                                     </div>
                                     <div class="col-md-5">
@@ -61,7 +61,7 @@
                                     </div>
                                     <div class="col-md-3">
                                         <label for="disposal_date" class="form-label fw-semibold">Дата события *</label>
-                                        <input type="date" class="form-control border-primary-subtle" id="disposal_date" name="disposal_date" required>
+                                        <input type="date" class="form-control border-primary-subtle" id="disposal_date" name="disposal_date" value="{{ form_data.get('disposal_date') if form_data and form_data.get('form_mode') != 'stillborn' else today }}" max="{{ today }}" required>
                                     </div>
                                 </div>
                             </div>
@@ -73,31 +73,25 @@
                                 </h6>
                                 <div class="row g-3">
                                     <div class="col-md-4">
-                                        <label for="ear_tag" class="form-label fw-semibold">Идетифик. № (Бирка AITS)</label>
-                                        <input type="text" class="form-control" id="ear_tag" name="ear_tag" placeholder="BY 04 1234567">
+                                        <label for="ear_tag" class="form-label fw-semibold">Идентифик. № (Бирка AITS)</label>
+                                        <input type="text" class="form-control" id="ear_tag" name="ear_tag" value="{{ form_data.get('ear_tag', '') if form_data and form_data.get('form_mode') != 'stillborn' else '' }}" placeholder="BY 04 1234567">
                                     </div>
                                     <div class="col-md-4">
                                         <label for="breed" class="form-label fw-semibold">Порода скота</label>
                                         <select class="form-select" id="breed" name="breed">
-                                            <option value="Черно-пёстрая белорусской селекции" selected>Черно-пёстрая белорусской селекции</option>
-                                            <option value="Голштинская">Голштинская</option>
-                                            <option value="Красная белорусская">Красная белорусская</option>
-                                            <option value="Симментальская">Симментальская</option>
-                                            <option value="Лимузин">Лимузин</option>
-                                            <option value="Помесь">Помесь</option>
+                                            {% set sel_breed = form_data.get('breed') if form_data and form_data.get('breed') else default_breed %}
+                                            {% for b in breeds %}
+                                            <option value="{{ b }}" {% if sel_breed == b %}selected{% endif %}>{{ b }}</option>
+                                            {% endfor %}
                                         </select>
                                     </div>
                                     <div class="col-md-4">
                                         <label for="age_group" class="form-label fw-semibold">Половозрастная группа (ПВГ)</label>
                                         <select class="form-select" id="age_group" name="age_group">
-                                            <option value="Телята (до 6 мес.)">Телята (до 6 мес.)</option>
-                                            <option value="Ремонтный молодняк (6–18 мес.)">Ремонтный молодняк (6–18 мес.)</option>
-                                            <option value="Нетели (>18 мес.)">Нетели (>18 мес., случной возраст)</option>
-                                            <option value="Новотельные коровы (0–30 дн DIM)">Новотельные коровы (0–30 дн DIM)</option>
-                                            <option value="Коровы 1-й лактации (первотёлки)">Коровы 1-й лактации (первотёлки)</option>
-                                            <option value="Полновозрастные коровы (2+ лакт.)" selected>Полновозрастные коровы (2+ лакт.)</option>
-                                            <option value="Сухостойные коровы">Сухостойные коровы</option>
-                                            <option value="Бычки на откорме">Бычки на откорме</option>
+                                            {% set sel_ag = form_data.get('age_group') if form_data and form_data.get('age_group') else 'Полновозрастные коровы (2+ лакт.)' %}
+                                            {% for ag in age_groups %}
+                                            <option value="{{ ag }}" {% if sel_ag == ag %}selected{% endif %}>{{ ag }}</option>
+                                            {% endfor %}
                                         </select>
                                     </div>
                                 </div>
@@ -111,26 +105,26 @@
                                 <div class="row g-3">
                                     <div class="col-md-2">
                                         <label for="lactation" class="form-label fw-semibold">Лактация №</label>
-                                        <input type="number" class="form-control" id="lactation" name="lactation" min="0" max="20" placeholder="0..15">
+                                        <input type="number" class="form-control" id="lactation" name="lactation" min="0" max="20" value="{{ form_data.get('lactation', '') if form_data else '' }}" placeholder="0..15">
                                     </div>
                                     <div class="col-md-3">
                                         <label for="lactation_days" class="form-label fw-semibold text-primary">Дни лактации (DIM)</label>
-                                        <input type="number" class="form-control" id="lactation_days" name="lactation_days" min="0" max="999" placeholder="Дней DIM">
+                                        <input type="number" class="form-control" id="lactation_days" name="lactation_days" min="0" max="999" value="{{ form_data.get('lactation_days', '') if form_data else '' }}" placeholder="Дней DIM">
                                         <div class="mt-1" id="lactationPhaseBadge">
                                             <span class="badge bg-light text-muted border">Фаза рассчитывается авто</span>
                                         </div>
                                     </div>
                                     <div class="col-md-2">
                                         <label for="weight" class="form-label fw-semibold">Масса (кг)</label>
-                                        <input type="number" step="0.1" class="form-control" id="weight" name="weight" min="0" placeholder="кг">
+                                        <input type="number" step="0.1" class="form-control" id="weight" name="weight" min="0" value="{{ form_data.get('weight', '') if form_data and form_data.get('form_mode') != 'stillborn' else '' }}" placeholder="кг">
                                     </div>
                                     <div class="col-md-2">
                                         <label for="milk_yield" class="form-label fw-semibold">Удой (кг)</label>
-                                        <input type="number" step="1" class="form-control" id="milk_yield" name="milk_yield" min="0" placeholder="кг">
+                                        <input type="number" step="1" class="form-control" id="milk_yield" name="milk_yield" min="0" value="{{ form_data.get('milk_yield', '') if form_data else '' }}" placeholder="кг">
                                     </div>
                                     <div class="col-md-3">
                                         <label for="book_value" class="form-label fw-semibold">Балансовая ст. (BYN)</label>
-                                        <input type="number" step="0.01" class="form-control" id="book_value" name="book_value" min="0" placeholder="BYN">
+                                        <input type="number" step="0.01" class="form-control" id="book_value" name="book_value" min="0" value="{{ form_data.get('book_value', '') if form_data else '' }}" placeholder="BYN">
                                     </div>
                                 </div>
                             </div>
@@ -144,7 +138,7 @@
                                 <div class="row g-3 align-items-center">
                                     <div class="col-md-6">
                                         <div class="form-check form-switch fs-6">
-                                            <input class="form-check-input" type="checkbox" id="is_pregnant" name="is_pregnant" value="1">
+                                            <input class="form-check-input" type="checkbox" id="is_pregnant" name="is_pregnant" value="1" {% if form_data and form_data.get('is_pregnant') in ['1', 'on', 'true'] %}checked{% endif %}>
                                             <label class="form-check-label fw-semibold text-dark" for="is_pregnant">
                                                 Корова была стельной на момент выбытия
                                             </label>
@@ -153,7 +147,7 @@
                                     <div class="col-md-6">
                                         <div class="input-group">
                                             <span class="input-group-text bg-white small text-muted">Срок стельности:</span>
-                                            <input type="number" class="form-control" id="gestation_days" name="gestation_days" min="0" max="300" placeholder="Дней (напр. 180)">
+                                            <input type="number" class="form-control" id="gestation_days" name="gestation_days" min="0" max="300" value="{{ form_data.get('gestation_days', '') if form_data and form_data.get('form_mode') != 'stillborn' else '' }}" placeholder="Дней (напр. 180)">
                                             <span class="input-group-text bg-white small text-muted">дн.</span>
                                         </div>
                                     </div>
@@ -163,7 +157,7 @@
                             <!-- Секция 5: Примечание -->
                             <div class="mb-4">
                                 <label for="notes" class="form-label fw-semibold">Заключение комиссии / Примечание</label>
-                                <input type="text" class="form-control" id="notes" name="notes" placeholder="Клиника, анамнез, заключение ветеринарного врача...">
+                                <input type="text" class="form-control" id="notes" name="notes" value="{{ form_data.get('notes', '') if form_data and form_data.get('form_mode') != 'stillborn' else '' }}" placeholder="Клиника, анамнез, заключение ветеринарного врача...">
                             </div>
 
                             <div class="d-flex justify-content-between align-items-center pt-3 border-top">
@@ -209,18 +203,14 @@
                                     <label for="sb_reason" class="form-label fw-bold text-dark">Вид патологии плода / Причина аборта *</label>
                                     <select class="form-select border-danger-subtle" id="sb_reason" name="reason" required>
                                         <option value="">Выберите патологию...</option>
-                                        <option value="Мертворождённый телёнок (в срок)" selected>Мертворождённый телёнок (в срок)</option>
-                                        <option value="Аборт (1-й триместр, до 90 дн)">Аборт (1-й триместр, до 90 дн)</option>
-                                        <option value="Аборт (2-й триместр, 91-180 дн)">Аборт (2-й триместр, 91-180 дн)</option>
-                                        <option value="Аборт (3-й триместр, 181-240 дн)">Аборт (3-й триместр, 181-240 дн)</option>
-                                        <option value="Мумификация / мацерация плода">Мумификация / мацерация плода</option>
-                                        <option value="Патология родов / гибель при родовспоможении">Патология родов / гибель при родовспоможении</option>
-                                        <option value="Инфекционный аборт (бруцеллез, хламидиоз)">Инфекционный аборт</option>
+                                        {% for et in event_types %}
+                                        <option value="{{ et }}" {% if (form_data and form_data.get('form_mode') == 'stillborn' and form_data.get('reason') == et) or (not form_data and loop.first) %}selected{% endif %}>{{ et }}</option>
+                                        {% endfor %}
                                     </select>
                                 </div>
                                 <div class="col-md-6">
                                     <label for="sb_disposal_date" class="form-label fw-bold text-dark">Дата абортирования / мертворождения *</label>
-                                    <input type="date" class="form-control border-danger-subtle" id="sb_disposal_date" name="disposal_date" required>
+                                    <input type="date" class="form-control border-danger-subtle" id="sb_disposal_date" name="disposal_date" value="{{ form_data.get('disposal_date') if form_data and form_data.get('form_mode') == 'stillborn' else today }}" max="{{ today }}" required>
                                 </div>
 
                                 <div class="col-md-3">
@@ -274,8 +264,15 @@
 {% block extra_js %}
 <script>
 $(document).ready(function() {
-    var today = new Date().toISOString().split('T')[0];
-    $('#disposal_date, #sb_disposal_date').val(today).attr('max', today);
+    var today = {{ today | tojson }};
+    if (!$('#disposal_date').val()) $('#disposal_date').val(today);
+    if (!$('#sb_disposal_date').val()) $('#sb_disposal_date').val(today);
+    $('#disposal_date, #sb_disposal_date').attr('max', today);
+
+    {% if form_data and form_data.get('form_mode') == 'stillborn' %}
+    var sbTab = document.getElementById('mode-stillborn-tab');
+    if (sbTab && window.bootstrap) new bootstrap.Tab(sbTab).show();
+    {% endif %}
     
     // Автоматический расчет фазы лактации по DIM и категории скота
     function updateLactationPhase() {
@@ -285,22 +282,22 @@ $(document).ready(function() {
         
         if (grp.indexOf('телят') !== -1 || grp.indexOf('молодняк') !== -1 || grp.indexOf('бычки') !== -1) {
             $badge.html('<span class="badge bg-success-subtle text-success border border-success-subtle">Молодняк (нелакирующее)</span>');
-            $('#lactation_days').prop('disabled', true).val('');
-            $('#lactation').prop('disabled', true).val('0');
+            $('#lactation_days').prop('readonly', true).addClass('bg-light').val('');
+            $('#lactation').prop('readonly', true).addClass('bg-light').val('0');
             return;
         } else if (grp.indexOf('нетел') !== -1) {
             $badge.html('<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">Нетели (до 1-го отёла)</span>');
-            $('#lactation_days').prop('disabled', true).val('');
-            $('#lactation').prop('disabled', true).val('0');
+            $('#lactation_days').prop('readonly', true).addClass('bg-light').val('');
+            $('#lactation').prop('readonly', true).addClass('bg-light').val('0');
             return;
         } else if (grp.indexOf('сухосто') !== -1) {
             $badge.html('<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Сухостойный период</span>');
-            $('#lactation_days').prop('disabled', true).val('0');
-            $('#lactation').prop('disabled', false);
+            $('#lactation_days').prop('readonly', true).addClass('bg-light').val('0');
+            $('#lactation').prop('readonly', false).removeClass('bg-light');
             return;
         } else {
-            $('#lactation_days').prop('disabled', false);
-            $('#lactation').prop('disabled', false);
+            $('#lactation_days').prop('readonly', false).removeClass('bg-light');
+            $('#lactation').prop('readonly', false).removeClass('bg-light');
         }
 
         if (!dimVal || dimVal === '') {
@@ -333,6 +330,11 @@ $(document).ready(function() {
         }
         updateLactationPhase();
     });
+    $('#is_pregnant').change(function() {
+        if (!$(this).is(':checked')) {
+            $('#gestation_days').val('');
+        }
+    });
     $('#gestation_days').on('input', function() {
         var val = parseInt($(this).val(), 10) || 0;
         if (val > 0) $('#is_pregnant').prop('checked', true);
@@ -340,8 +342,7 @@ $(document).ready(function() {
     $('#lactation_days').on('input', updateLactationPhase);
     updateLactationPhase();
 
-    $('#category').change(function() {
-        var category = $(this).val();
+    function loadAddReasons(category, preselect) {
         var $reasonSelect = $('#reason');
         $reasonSelect.empty().append('<option value="">Загрузка причин...</option>');
         
@@ -349,7 +350,9 @@ $(document).ready(function() {
             $.getJSON('/get_reasons/' + encodeURIComponent(category), function(data) {
                 $reasonSelect.empty().append('<option value="">Выберите причину</option>');
                 $.each(data, function(index, reason) {
-                    $reasonSelect.append($('<option>', { value: reason, text: reason }));
+                    var $opt = $('<option>', { value: reason, text: reason });
+                    if (preselect && reason === preselect) $opt.prop('selected', true);
+                    $reasonSelect.append($opt);
                 });
                 $reasonSelect.prop('disabled', false);
             }).fail(function() {
@@ -358,7 +361,15 @@ $(document).ready(function() {
         } else {
             $reasonSelect.empty().append('<option value="">Сначала выберите категорию</option>').prop('disabled', true);
         }
+    }
+
+    $('#category').change(function() {
+        loadAddReasons($(this).val(), null);
     });
+
+    {% if form_data and form_data.get('category') and form_data.get('form_mode') != 'stillborn' %}
+    loadAddReasons({{ form_data.get('category') | tojson }}, {{ form_data.get('reason', '') | tojson }});
+    {% endif %}
 });
 </script>
 {% endblock %}

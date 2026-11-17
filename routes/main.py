@@ -1,11 +1,9 @@
 # routes/main.py - Главная страница и дашборд
-import os
-from flask import Blueprint, render_template, request, redirect, url_for, session, send_file, Response
+from flask import Blueprint, render_template, request, redirect, url_for, session
 from config import Config
+from database import get_all_settings
 from .auth import login_required
-from charts import (
-    get_anomaly_alerts, get_user_statistics, get_dashboard_full_data
-)
+from charts import get_anomaly_alerts, get_dashboard_full_data
 
 main_bp = Blueprint('main', __name__)
 
@@ -39,9 +37,7 @@ def dashboard():
         custom_end=custom_end
     )
     alerts = get_anomaly_alerts(user_type, selected_farm)
-    user_stats_data = get_user_statistics() if user_type == 'admin' else None
     
-    from database import get_all_settings
     all_settings = get_all_settings()
     def _s(k, default):
         try:
@@ -49,30 +45,40 @@ def dashboard():
         except (ValueError, TypeError):
             return float(default)
 
+    dp = Config.DEFAULT_PRICES
+    sc = Config.DEFAULT_SCORECARD_THRESHOLDS
+    an = Config.DEFAULT_ANALYTICS_PARAMS
+
     pricing_data = {
-        'price_calves': _s('price_calves', 900.0),
-        'price_youngstock': _s('price_youngstock', 1650.0),
-        'price_heifers': _s('price_heifers', 2700.0),
-        'price_cows': _s('price_cows', 3200.0),
-        'price_dry_cows': _s('price_dry_cows', 3000.0),
-        'meat_price_per_kg': _s('meat_price_per_kg', 6.20),
-        'milk_price_per_kg': _s('milk_price_per_kg', 1.18),
-        'replacement_cost': _s('replacement_cost', 2950.0),
-        'norm_fresh_cow_disposal': _s('norm_fresh_cow_disposal', 10.0),
-        'warn_fresh_cow_disposal': _s('warn_fresh_cow_disposal', 14.0),
-        'crit_fresh_cow_disposal': _s('crit_fresh_cow_disposal', 18.0),
-        'norm_first_lactation_culling': _s('norm_first_lactation_culling', 20.0),
-        'warn_first_lactation_culling': _s('warn_first_lactation_culling', 25.0),
-        'crit_first_lactation_culling': _s('crit_first_lactation_culling', 30.0),
-        'norm_mortality_rate': _s('norm_mortality_rate', 25.0),
-        'warn_mortality_rate': _s('warn_mortality_rate', 35.0),
-        'crit_mortality_rate': _s('crit_mortality_rate', 45.0),
-        'norm_locomotor_disorders': _s('norm_locomotor_disorders', 15.0),
-        'warn_locomotor_disorders': _s('warn_locomotor_disorders', 20.0),
-        'crit_locomotor_disorders': _s('crit_locomotor_disorders', 25.0),
-        'norm_mastitis_disorders': _s('norm_mastitis_disorders', 15.0),
-        'warn_mastitis_disorders': _s('warn_mastitis_disorders', 20.0),
-        'crit_mastitis_disorders': _s('crit_mastitis_disorders', 25.0)
+        'price_calves': _s('price_calves', dp['price_calves']),
+        'price_youngstock': _s('price_youngstock', dp['price_youngstock']),
+        'price_heifers': _s('price_heifers', dp['price_heifers']),
+        'price_cows': _s('price_cows', dp['price_cows']),
+        'price_dry_cows': _s('price_dry_cows', dp['price_dry_cows']),
+        'meat_price_per_kg': _s('meat_price_per_kg', dp['meat_price_per_kg']),
+        'milk_price_per_kg': _s('milk_price_per_kg', dp['milk_price_per_kg']),
+        'replacement_cost': _s('replacement_cost', dp['replacement_cost']),
+        'norm_fresh_cow_disposal': _s('norm_fresh_cow_disposal', sc['norm_fresh_cow_disposal']),
+        'warn_fresh_cow_disposal': _s('warn_fresh_cow_disposal', sc['warn_fresh_cow_disposal']),
+        'crit_fresh_cow_disposal': _s('crit_fresh_cow_disposal', sc['crit_fresh_cow_disposal']),
+        'norm_first_lactation_culling': _s('norm_first_lactation_culling', sc['norm_first_lactation_culling']),
+        'warn_first_lactation_culling': _s('warn_first_lactation_culling', sc['warn_first_lactation_culling']),
+        'crit_first_lactation_culling': _s('crit_first_lactation_culling', sc['crit_first_lactation_culling']),
+        'norm_mortality_rate': _s('norm_mortality_rate', sc['norm_mortality_rate']),
+        'warn_mortality_rate': _s('warn_mortality_rate', sc['warn_mortality_rate']),
+        'crit_mortality_rate': _s('crit_mortality_rate', sc['crit_mortality_rate']),
+        'norm_locomotor_disorders': _s('norm_locomotor_disorders', sc['norm_locomotor_disorders']),
+        'warn_locomotor_disorders': _s('warn_locomotor_disorders', sc['warn_locomotor_disorders']),
+        'crit_locomotor_disorders': _s('crit_locomotor_disorders', sc['crit_locomotor_disorders']),
+        'norm_mastitis_disorders': _s('norm_mastitis_disorders', sc['norm_mastitis_disorders']),
+        'warn_mastitis_disorders': _s('warn_mastitis_disorders', sc['warn_mastitis_disorders']),
+        'crit_mastitis_disorders': _s('crit_mastitis_disorders', sc['crit_mastitis_disorders']),
+        'matrix_warn_pct': _s('matrix_warn_pct', an['matrix_warn_pct']),
+        'matrix_crit_pct': _s('matrix_crit_pct', an['matrix_crit_pct']),
+        'sanitary_meat_factor': _s('sanitary_meat_factor', an['sanitary_meat_factor']),
+        'standard_lactation_days': int(_s('standard_lactation_days', an['standard_lactation_days'])),
+        'default_daily_milk_kg': _s('default_daily_milk_kg', an['default_daily_milk_kg']),
+        'high_yield_threshold_kg': int(_s('high_yield_threshold_kg', an['high_yield_threshold_kg']))
     }
     
     return render_template('dashboard.html',
@@ -81,5 +87,4 @@ def dashboard():
                            selected_farm=selected_farm,
                            d=dashboard_data,
                            alerts=alerts,
-                           user_stats_data=user_stats_data,
                            pricing=pricing_data)

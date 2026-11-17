@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Редактирование записи выбытия - АгроУчёт PRO{% endblock %}
+{% block title %}Редактирование записи выбытия - {{ org_name }}{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
@@ -32,7 +32,7 @@
                         
                         <div class="col-md-4">
                             <label for="disposal_date" class="form-label fw-semibold">Дата выбытия *</label>
-                            <input type="date" class="form-control" id="disposal_date" name="disposal_date" value="{{ cow.disposal_date }}" required>
+                            <input type="date" class="form-control" id="disposal_date" name="disposal_date" value="{{ cow.disposal_date }}" max="{{ today }}" required>
                         </div>
                         
                         <div class="col-md-4">
@@ -44,7 +44,7 @@
                             <label for="age_group" class="form-label fw-semibold">Половозрастная группа (ПВГ)</label>
                             <select class="form-select" id="age_group" name="age_group">
                                 <option value="Телята (до 6 мес.)" {% if 'телят' in (cow.age_group or '').lower() or 'до 6' in (cow.age_group or '').lower() or '0–6' in (cow.age_group or '').lower() %}selected{% endif %}>Телята (до 6 мес.)</option>
-                                <option value="Ремонтный молодняк (6–18 мес.)" {% if ('молодняк' in (cow.age_group or '').lower() or 'тёлк' in (cow.age_group or '').lower() or 'ремонтн' in (cow.age_group or '').lower()) and 'телят' not in (cow.age_group or '').lower() %}selected{% endif %}>Ремонтный молодняк (6–18 мес.)</option>
+                                <option value="Ремонтный молодняк (6–18 мес.)" {% if ('молодняк' in (cow.age_group or '').lower() or ('тёлк' in (cow.age_group or '').lower() and 'первот' not in (cow.age_group or '').lower()) or 'ремонтн' in (cow.age_group or '').lower()) and 'телят' not in (cow.age_group or '').lower() %}selected{% endif %}>Ремонтный молодняк (6–18 мес.)</option>
                                 <option value="Нетели (>18 мес.)" {% if 'нетел' in (cow.age_group or '').lower() %}selected{% endif %}>Нетели (>18 мес., случной возраст)</option>
                                 <option value="Новотельные коровы (0–30 дн DIM)" {% if 'новотел' in (cow.age_group or '').lower() %}selected{% endif %}>Новотельные коровы (0–30 дн DIM)</option>
                                 <option value="Коровы 1-й лактации (первотёлки)" {% if 'первотел' in (cow.age_group or '').lower() or 'первотёл' in (cow.age_group or '').lower() or '1-й лакт' in (cow.age_group or '').lower() or '1-я лакт' in (cow.age_group or '').lower() %}selected{% endif %}>Коровы 1-й лактации (первотёлки)</option>
@@ -56,12 +56,20 @@
                         
                         <div class="col-md-3">
                             <label for="breed" class="form-label fw-semibold">Порода</label>
-                            <input type="text" class="form-control" id="breed" name="breed" value="{{ cow.breed or 'Черно-пёстрая' }}">
+                            <select class="form-select" id="breed" name="breed">
+                                {% set cur_breed = cow.breed or '' %}
+                                {% if cur_breed and cur_breed not in breeds %}
+                                <option value="{{ cur_breed }}" selected>{{ cur_breed }} (архив)</option>
+                                {% endif %}
+                                {% for b in breeds %}
+                                <option value="{{ b }}" {% if cur_breed == b %}selected{% endif %}>{{ b }}</option>
+                                {% endfor %}
+                            </select>
                         </div>
 
                         <div class="col-md-3">
                             <label for="lactation" class="form-label fw-semibold">Номер лактации</label>
-                            <input type="number" class="form-control" id="lactation" name="lactation" min="0" max="20" value="{{ cow.lactation or '' }}">
+                            <input type="number" class="form-control" id="lactation" name="lactation" min="0" max="20" value="{{ cow.lactation if cow.lactation is not none else '' }}">
                         </div>
 
                         <div class="col-md-3">
@@ -149,13 +157,22 @@ $(document).ready(function() {
         
         if (grp.indexOf('телят') !== -1 || grp.indexOf('молодняк') !== -1 || grp.indexOf('бычки') !== -1) {
             $badge.html('<span class="badge bg-success-subtle text-success border border-success-subtle">Молодняк (нелактирующее)</span>');
+            $('#lactation_days').prop('readonly', true).addClass('bg-light').val('');
+            $('#lactation').prop('readonly', true).addClass('bg-light').val('0');
             return;
         } else if (grp.indexOf('нетел') !== -1) {
             $badge.html('<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">Нетели</span>');
+            $('#lactation_days').prop('readonly', true).addClass('bg-light').val('');
+            $('#lactation').prop('readonly', true).addClass('bg-light').val('0');
             return;
         } else if (grp.indexOf('сухосто') !== -1) {
             $badge.html('<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Сухостойный период</span>');
+            $('#lactation_days').prop('readonly', true).addClass('bg-light').val('0');
+            $('#lactation').prop('readonly', false).removeClass('bg-light');
             return;
+        } else {
+            $('#lactation_days').prop('readonly', false).removeClass('bg-light');
+            $('#lactation').prop('readonly', false).removeClass('bg-light');
         }
 
         if (!dimVal || dimVal === '') {
@@ -180,28 +197,41 @@ $(document).ready(function() {
     $('#lactation_days').on('input', updateLactationPhase);
     updateLactationPhase();
 
+    $('#is_pregnant').change(function() {
+        if (!$(this).is(':checked')) {
+            $('#gestation_days').val('');
+        }
+    });
+    $('#gestation_days').on('input', function() {
+        var val = parseInt($(this).val(), 10) || 0;
+        if (val > 0) $('#is_pregnant').prop('checked', true);
+    });
+
     function loadReasons(category, selectedReason) {
         if (!category) return;
-        $.getJSON('{{ url_for("get_reasons", category="") }}' + category, function(data) {
+        $.getJSON('/get_reasons/' + encodeURIComponent(category), function(data) {
             var $reasonSelect = $('#reason');
             $reasonSelect.empty();
             var matchFound = false;
             $.each(data, function(index, reason) {
                 var $opt = $('<option>', { value: reason, text: reason });
-                if (reason === selectedReason) {
+                if (selectedReason && reason === selectedReason) {
                     $opt.prop('selected', true);
                     matchFound = true;
                 }
                 $reasonSelect.append($opt);
             });
-            if (!matchFound && data && data.length > 0) {
+            if (selectedReason && !matchFound) {
+                var $legacyOpt = $('<option>', { value: selectedReason, text: selectedReason + ' (текущее)' }).prop('selected', true);
+                $reasonSelect.prepend($legacyOpt);
+            } else if (!selectedReason && data && data.length > 0) {
                 $reasonSelect.val(data[0]);
             }
         });
     }
 
     var currentCat = $('#category').val();
-    var currentReason = '{{ cow.reason }}';
+    var currentReason = {{ (cow.reason or '') | tojson }};
     loadReasons(currentCat, currentReason);
 
     $('#category').change(function() {

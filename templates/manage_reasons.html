@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Справочник причин выбытия - АгроУчёт PRO{% endblock %}
+{% block title %}Справочник причин выбытия - {{ org_name }}{% endblock %}
 
 {% block content %}
 <div class="row">
@@ -78,9 +78,9 @@
                                             <i class="bi {% if r.is_active == 1 %}bi-eye-slash{% else %}bi-eye{% endif %}"></i>
                                         </button>
                                     </form>
-                                    <form method="POST" action="{{ url_for('delete_reason', reason_id=r.id) }}" class="d-inline" onsubmit="return confirm('Удалить эту причину из справочника?');">
+                                    <form method="POST" action="{{ url_for('delete_reason', reason_id=r.id) }}" class="d-inline delete-reason-form">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Удалить">
+                                        <button type="button" class="btn btn-sm btn-outline-danger btn-delete-reason" data-reason-name="{{ r.name }}" title="Удалить">
                                             <i class="bi bi-trash"></i>
                                         </button>
                                     </form>
@@ -94,4 +94,42 @@
         </div>
     </div>
 </div>
+
+<div class="modal fade" id="deleteReasonModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>Удаление причины</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+                Удалить причину <strong id="deleteReasonName"></strong> из справочника?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteReasonBtn">Удалить</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    let pendingReasonForm = null;
+    const modalEl = document.getElementById('deleteReasonModal');
+    const modalObj = modalEl ? new bootstrap.Modal(modalEl) : null;
+
+    $(document).on('click', '.btn-delete-reason', function() {
+        pendingReasonForm = $(this).closest('form');
+        $('#deleteReasonName').text($(this).data('reason-name') || '');
+        if (modalObj) modalObj.show();
+    });
+
+    $('#confirmDeleteReasonBtn').click(function() {
+        if (pendingReasonForm) pendingReasonForm.trigger('submit');
+    });
+});
+</script>
 {% endblock %}

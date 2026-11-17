@@ -30,6 +30,8 @@ def stillborn_list():
     start_date = request.args.get('start_date', '').strip()
     end_date = request.args.get('end_date', '').strip()
     search = request.args.get('search', '').strip().lower()
+    page = max(1, request.args.get('page', 1, type=int))
+    per_page = 50
     
     conditions = []
     params = []
@@ -46,11 +48,18 @@ def stillborn_list():
         params.append(event_type_filter)
         
     if start_date and end_date:
+        s_dt, e_dt = (start_date, end_date) if start_date <= end_date else (end_date, start_date)
         conditions.append("event_date BETWEEN ? AND ?")
-        params.extend([start_date, end_date])
+        params.extend([s_dt, e_dt])
+    elif start_date:
+        conditions.append("event_date >= ?")
+        params.append(start_date)
+    elif end_date:
+        conditions.append("event_date <= ?")
+        params.append(end_date)
         
     if search:
-        conditions.append("(record_code LIKE ? OR mother_tag LIKE ? OR cause LIKE ? OR farm_name LIKE ? OR attendant LIKE ?)")
+        conditions.append("(LOWER(COALESCE(record_code,'')) LIKE ? OR LOWER(COALESCE(mother_tag,'')) LIKE ? OR LOWER(COALESCE(cause,'')) LIKE ? OR LOWER(COALESCE(farm_name,'')) LIKE ? OR LOWER(COALESCE(attendant,'')) LIKE ?)")
         wild = f"%{search}%"
         params.extend([wild, wild, wild, wild, wild])
         
@@ -78,12 +87,17 @@ def stillborn_list():
     term_stillborn_cnt = counts_row['term_cnt']
     abortion_cnt = counts_row['abort_cnt']
     
+    total_pages = max(1, (total_count + per_page - 1) // per_page)
+    if page > total_pages:
+        page = total_pages
+    offset = (page - 1) * per_page
+
     cursor.execute(f'''
         SELECT * FROM stillbirth_records 
         {where_sql} 
         ORDER BY event_date DESC, id DESC 
-        LIMIT 100
-    ''', params)
+        LIMIT ? OFFSET ?
+    ''', params + [per_page, offset])
     records = [dict(r) for r in cursor.fetchall()]
     conn.close()
     
@@ -92,6 +106,9 @@ def stillborn_list():
                            total_count=total_count,
                            term_stillborn_cnt=term_stillborn_cnt,
                            abortion_cnt=abortion_cnt,
+                           page=page,
+                           total_pages=total_pages,
+                           per_page=per_page,
                            farms=farms,
                            event_types=Config.STILLBIRTH_EVENT_TYPES,
                            causes=Config.STILLBIRTH_CAUSES,
@@ -111,37 +128,63 @@ def add_stillborn():
         return redirect(url_for('stillborn.stillborn_list'))
         
     farm_name = session.get('farm_name')
+    today = datetime.now().strftime('%Y-%m-%d')
     
     if request.method == 'POST':
-        event_date = request.form.get('event_date')
+        event_date = (request.form.get('event_date') or '').strip()
         mother_tag = request.form.get('mother_tag', '').strip() or None
-        mother_group = request.form.get('mother_group') or 'Полновозрастные коровы (2+ лакт.)'
-        event_type = request.form.get('event_type') or 'Мертворождённый телёнок (в срок)'
+        mother_group = request.form.get('mother_group') or Config.DEFAULT_STILLBORN_MOTHER_GROUP
+        event_type = request.form.get('event_type') or Config.STILLBIRTH_EVENT_TYPES[0]
         fetus_sex = request.form.get('fetus_sex') or 'Не определён'
         cause = request.form.get('cause', '').strip()
         custom_cause = request.form.get('custom_cause', '').strip()
         if custom_cause and (cause == 'Другое' or not cause):
             cause = custom_cause
             
-        mother_condition = request.form.get('mother_condition') or 'Здорова, оставлена в стаде'
-        attendant = request.form.get('attendant', '').strip() or 'Дежурный ветврач'
+        mother_condition = request.form.get('mother_condition') or Config.MOTHER_CONDITIONS[0]
+        attendant = request.form.get('attendant', '').strip() or Config.DEFAULT_ATTENDANT
         notes = request.form.get('notes', '').strip() or None
         
+        def_gest, def_w = Config.infer_stillborn_defaults(event_type)
         try:
-            fetus_weight = float(request.form.get('fetus_weight')) if request.form.get('fetus_weight') else 25.0
+            fetus_weight = float(request.form.get('fetus_weight')) if request.form.get('fetus_weight') else def_w
         except (ValueError, TypeError):
-            fetus_weight = 25.0
+            fetus_weight = def_w
             
         try:
-            gestation_days = int(request.form.get('gestation_days')) if request.form.get('gestation_days') else 280
+            gestation_days = int(request.form.get('gestation_days')) if request.form.get('gestation_days') else def_gest
         except (ValueError, TypeError):
-            gestation_days = 280
+            gestation_days = def_gest
+
+        draft_record = {
+            'event_date': event_date, 'mother_tag': mother_tag, 'mother_group': mother_group,
+            'event_type': event_type, 'fetus_sex': fetus_sex, 'fetus_weight': fetus_weight,
+            'gestation_days': gestation_days, 'cause': cause, 'mother_condition': mother_condition,
+            'attendant': attendant, 'notes': notes
+        }
             
         if not event_date or not cause or not event_type:
             flash('Пожалуйста, заполните дату, тип события и причину гибели плода.', 'danger')
             return render_template('stillborn_form.html',
                                    action='add',
+                                   record=draft_record,
                                    farm_name=farm_name,
+                                   today=today,
+                                   stillborn_prefill=Config.STILLBORN_PREFILL_MAP,
+                                   event_types=Config.STILLBIRTH_EVENT_TYPES,
+                                   causes=Config.STILLBIRTH_CAUSES,
+                                   fetus_sexes=Config.FETUS_SEXES,
+                                   mother_conditions=Config.MOTHER_CONDITIONS,
+                                   mother_groups=Config.MOTHER_GROUPS)
+
+        if event_date > today:
+            flash('Дата события не может быть позже сегодняшнего дня.', 'danger')
+            return render_template('stillborn_form.html',
+                                   action='add',
+                                   record=draft_record,
+                                   farm_name=farm_name,
+                                   today=today,
+                                   stillborn_prefill=Config.STILLBORN_PREFILL_MAP,
                                    event_types=Config.STILLBIRTH_EVENT_TYPES,
                                    causes=Config.STILLBIRTH_CAUSES,
                                    fetus_sexes=Config.FETUS_SEXES,
@@ -179,8 +222,10 @@ def add_stillborn():
         
     return render_template('stillborn_form.html',
                            action='add',
+                           record=None,
                            farm_name=farm_name,
-                           today=datetime.now().strftime('%Y-%m-%d'),
+                           today=today,
+                           stillborn_prefill=Config.STILLBORN_PREFILL_MAP,
                            event_types=Config.STILLBIRTH_EVENT_TYPES,
                            causes=Config.STILLBIRTH_CAUSES,
                            fetus_sexes=Config.FETUS_SEXES,
@@ -193,6 +238,7 @@ def edit_stillborn(record_id):
     """Редактирование записи о мертворождении/аборте"""
     user_type = session.get('user_type')
     farm_name = session.get('farm_name')
+    today = datetime.now().strftime('%Y-%m-%d')
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -211,29 +257,52 @@ def edit_stillborn(record_id):
     record = dict(record_row)
     
     if request.method == 'POST':
-        event_date = request.form.get('event_date')
+        event_date = (request.form.get('event_date') or '').strip()
         mother_tag = request.form.get('mother_tag', '').strip() or None
-        mother_group = request.form.get('mother_group') or 'Полновозрастные коровы (2+ лакт.)'
-        event_type = request.form.get('event_type') or 'Мертворождённый телёнок (в срок)'
+        mother_group = request.form.get('mother_group') or Config.DEFAULT_STILLBORN_MOTHER_GROUP
+        event_type = request.form.get('event_type') or Config.STILLBIRTH_EVENT_TYPES[0]
         fetus_sex = request.form.get('fetus_sex') or 'Не определён'
         cause = request.form.get('cause', '').strip()
         custom_cause = request.form.get('custom_cause', '').strip()
         if custom_cause and (cause == 'Другое' or not cause):
             cause = custom_cause
             
-        mother_condition = request.form.get('mother_condition') or 'Здорова, оставлена в стаде'
-        attendant = request.form.get('attendant', '').strip() or 'Дежурный ветврач'
+        mother_condition = request.form.get('mother_condition') or Config.MOTHER_CONDITIONS[0]
+        attendant = request.form.get('attendant', '').strip() or Config.DEFAULT_ATTENDANT
         notes = request.form.get('notes', '').strip() or None
         
+        def_gest, def_w = Config.infer_stillborn_defaults(event_type)
         try:
-            fetus_weight = float(request.form.get('fetus_weight')) if request.form.get('fetus_weight') else 25.0
+            fetus_weight = float(request.form.get('fetus_weight')) if request.form.get('fetus_weight') else def_w
         except (ValueError, TypeError):
-            fetus_weight = 25.0
+            fetus_weight = def_w
             
         try:
-            gestation_days = int(request.form.get('gestation_days')) if request.form.get('gestation_days') else 280
+            gestation_days = int(request.form.get('gestation_days')) if request.form.get('gestation_days') else def_gest
         except (ValueError, TypeError):
-            gestation_days = 280
+            gestation_days = def_gest
+
+        if not event_date or not cause or not event_type or event_date > today:
+            flash('Проверьте корректность даты (не позже сегодняшней), типа события и причины гибели плода.', 'danger')
+            record.update({
+                'event_date': event_date or record.get('event_date'),
+                'mother_tag': mother_tag, 'mother_group': mother_group, 'event_type': event_type,
+                'fetus_sex': fetus_sex, 'fetus_weight': fetus_weight, 'gestation_days': gestation_days,
+                'cause': cause or record.get('cause'), 'mother_condition': mother_condition,
+                'attendant': attendant, 'notes': notes
+            })
+            conn.close()
+            return render_template('stillborn_form.html',
+                                   action='edit',
+                                   record=record,
+                                   farm_name=record['farm_name'],
+                                   today=today,
+                                   stillborn_prefill=Config.STILLBORN_PREFILL_MAP,
+                                   event_types=Config.STILLBIRTH_EVENT_TYPES,
+                                   causes=Config.STILLBIRTH_CAUSES,
+                                   fetus_sexes=Config.FETUS_SEXES,
+                                   mother_conditions=Config.MOTHER_CONDITIONS,
+                                   mother_groups=Config.MOTHER_GROUPS)
             
         cursor.execute('''
             UPDATE stillbirth_records SET 
@@ -275,6 +344,8 @@ def edit_stillborn(record_id):
                            action='edit',
                            record=record,
                            farm_name=record['farm_name'],
+                           today=today,
+                           stillborn_prefill=Config.STILLBORN_PREFILL_MAP,
                            event_types=Config.STILLBIRTH_EVENT_TYPES,
                            causes=Config.STILLBIRTH_CAUSES,
                            fetus_sexes=Config.FETUS_SEXES,
@@ -328,8 +399,10 @@ def export_stillborn_excel():
     session_farm = session.get('farm_name')
     
     farm_filter = request.args.get('farm', '').strip()
+    event_type_filter = request.args.get('event_type', '').strip()
     start_date = request.args.get('start_date', '').strip()
     end_date = request.args.get('end_date', '').strip()
+    search = request.args.get('search', '').strip().lower()
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -343,10 +416,26 @@ def export_stillborn_excel():
     elif farm_filter and farm_filter != 'all':
         conditions.append("farm_name = ?")
         params.append(farm_filter)
+
+    if event_type_filter and event_type_filter != 'all':
+        conditions.append("event_type = ?")
+        params.append(event_type_filter)
         
     if start_date and end_date:
+        s_dt, e_dt = (start_date, end_date) if start_date <= end_date else (end_date, start_date)
         conditions.append("event_date BETWEEN ? AND ?")
-        params.extend([start_date, end_date])
+        params.extend([s_dt, e_dt])
+    elif start_date:
+        conditions.append("event_date >= ?")
+        params.append(start_date)
+    elif end_date:
+        conditions.append("event_date <= ?")
+        params.append(end_date)
+
+    if search:
+        conditions.append("(LOWER(COALESCE(record_code,'')) LIKE ? OR LOWER(COALESCE(mother_tag,'')) LIKE ? OR LOWER(COALESCE(cause,'')) LIKE ? OR LOWER(COALESCE(farm_name,'')) LIKE ? OR LOWER(COALESCE(attendant,'')) LIKE ?)")
+        wild = f"%{search}%"
+        params.extend([wild, wild, wild, wild, wild])
         
     where_sql = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     cursor.execute(f"SELECT * FROM stillbirth_records {where_sql} ORDER BY event_date ASC", params)
@@ -369,14 +458,21 @@ def export_stillborn_excel():
         bottom=Side(style='thin', color='CCCCCC')
     )
     
-    org_name = get_setting('farm_org_name', 'ОАО «Новая Припять»')
-    ws.merge_cells('A1:J1')
+    org_name = get_setting('farm_org_name', Config.DEFAULT_ORG_NAME)
+    ws.merge_cells('A1:N1')
     ws['A1'] = f"{org_name} — Журнал учёта мертворождений и абортов"
     ws['A1'].font = title_font
     ws['A1'].alignment = Alignment(horizontal='left', vertical='center')
     
-    ws.merge_cells('A2:J2')
-    period_str = f"Период: {start_date} — {end_date}" if start_date and end_date else "За весь период"
+    ws.merge_cells('A2:N2')
+    if start_date and end_date:
+        period_str = f"Период: {start_date} — {end_date}"
+    elif start_date:
+        period_str = f"Период: с {start_date}"
+    elif end_date:
+        period_str = f"Период: по {end_date}"
+    else:
+        period_str = "За весь период"
     ws['A2'] = f"{period_str} | Подразделение: {farm_filter or session_farm or 'Все фермы'}"
     ws['A2'].font = Font(name='Arial', size=10, italic=True)
     

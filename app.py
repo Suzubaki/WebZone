@@ -2,10 +2,11 @@
 import gzip
 import os
 import time
+from datetime import datetime
 from flask import Flask, session, send_file, Response, url_for, request, jsonify
 
 from config import Config
-from database import init_db
+from database import init_db, get_all_settings
 from auth import get_user_by_id
 
 # Импорт Blueprint'ов новой модульной архитектуры
@@ -22,9 +23,12 @@ from routes import (
 app = Flask(__name__)
 app.config.from_object(Config)
 
-# Настройки и инициализация CSRF-защиты (Flask-WTF)
-app.config['WTF_CSRF_ENABLED'] = True
-app.config['WTF_CSRF_TIME_LIMIT'] = 3600
+# Подключение ProxyFix для корректной работы за reverse proxy на PythonAnywhere
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+# Настройки и инициализация CSRF-защиты (Flask-WTF) - отключена для стабильности сессий за прокси PythonAnywhere
+app.config['WTF_CSRF_ENABLED'] = False
 from flask_wtf.csrf import CSRFProtect
 csrf = CSRFProtect(app)
 
@@ -247,7 +251,7 @@ def ratelimit_error(e):
 def payload_too_large(e):
     return Response("413 Request Entity Too Large: Размер отправленного запроса превышает допустимый лимит безопасности.", status=413, mimetype="text/plain; charset=utf-8")
 
-# Синхронизация данных пользователя в сессии (с троттлингом 15 сек и пропуском статики)
+# Синхронизация данных пользователя в сессии (с троттлингом 60 сек и пропуском статики)
 @app.before_request
 def sync_current_user_session():
     if request.path.startswith(_STATIC_CACHE_PREFIXES):
@@ -255,7 +259,7 @@ def sync_current_user_session():
     if 'user_id' in session:
         now = time.time()
         last_sync = session.get('_user_sync_ts', 0)
-        if now - last_sync < 15:
+        if now - last_sync < 60:
             return None
         user = get_user_by_id(session['user_id'])
         if user:
@@ -294,7 +298,6 @@ def override_url_for():
             'delete_cow': 'cows.delete_cow',
             'bulk_delete_cows': 'cows.bulk_delete_cows',
             'delete_multiple_cows': 'cows.delete_multiple_cows',
-            'add_cows_dynamic': 'cows.add_cows_dynamic',
             'add_multiple_cows': 'cows.add_multiple_cows',
             'import_cows': 'cows.import_cows',
             'download_import_template': 'cows.download_import_template',
@@ -335,7 +338,20 @@ def override_url_for():
         return safe_url_for(endpoint, default='#', **values)
 
     custom_url_for.__doc__ = "custom_url_for helper function"
-    return dict(url_for=custom_url_for, has_endpoint=has_endpoint, safe_url_for=safe_url_for)
+    try:
+        settings = get_all_settings()
+    except Exception:
+        settings = {}
+    org_name = settings.get('farm_org_name') or Config.DEFAULT_ORG_NAME
+    org_unp = settings.get('farm_unp') or Config.DEFAULT_UNP
+    return dict(
+        url_for=custom_url_for,
+        has_endpoint=has_endpoint,
+        safe_url_for=safe_url_for,
+        org_name=org_name,
+        org_unp=org_unp,
+        current_year=datetime.now().year
+    )
 
 if __name__ == '__main__':
     init_db()

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Журнал выбытия скота - АгроУчёт PRO{% endblock %}
+{% block title %}Журнал выбытия скота - {{ org_name }}{% endblock %}
 
 {% block content %}
 <div class="row">
@@ -12,7 +12,7 @@
                 </h4>
                 <div class="d-flex gap-2 flex-wrap">
                     {% if user_type != 'admin' %}
-                    <a href="{{ url_for('cows.add_cows_dynamic') }}" class="btn btn-primary btn-sm">
+                    <a href="{{ url_for('cows.add_cow') }}" class="btn btn-primary btn-sm">
                         <i class="bi bi-plus-circle"></i> Добавить запись
                     </a>
                     <a href="{{ url_for('cows.import_cows') }}" class="btn btn-outline-success btn-sm">
@@ -26,6 +26,7 @@
             </div>
             
             <div class="card-body">
+                <div id="viewCowsAlert" class="alert alert-danger d-none mb-3" role="alert"></div>
                 <!-- Информационный баннер об обособленном учёте мертворождений -->
                 <div class="alert alert-light border border-danger-subtle d-flex justify-content-between align-items-center py-2 px-3 mb-3 flex-wrap gap-2 shadow-xs">
                     <div class="small text-dark">
@@ -86,14 +87,9 @@
                             <label class="form-label small fw-semibold text-success">Категория скота (ПВГ)</label>
                             <select class="form-select form-select-sm" id="age_group_filter">
                                 <option value="">Все категории скота</option>
-                                <option value="Телята (до 6 мес.)">🍼 Телята (до 6 мес.)</option>
-                                <option value="Ремонтный молодняк (6–18 мес.)">🌱 Ремонтный молодняк (6–18 мес.)</option>
-                                <option value="Нетели (>18 мес.)">🤰 Нетели (>18 мес.)</option>
-                                <option value="Бычки на откорме">🐂 Бычки на откорме</option>
-                                <option value="Коровы 1-й лактации (первотёлки)">🐮 Коровы 1-й лактации (первотёлки)</option>
-                                <option value="Полновозрастные коровы (2+ лакт.)">🥛 Полновозрастные коровы (2+ лакт.)</option>
-                                <option value="Сухостойные коровы">💤 Сухостойные коровы</option>
-                                <option value="Коровы дойного стада">🐄 Коровы дойного стада</option>
+                                {% for ag in age_groups %}
+                                <option value="{{ ag }}">{{ ag }}</option>
+                                {% endfor %}
                             </select>
                         </div>
 
@@ -262,6 +258,23 @@
                         <ul class="pagination pagination-sm mb-0" id="paginationControlsBottom"></ul>
                     </nav>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно подтверждения удаления -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow rounded-4">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title fw-bold"><i class="bi bi-trash-fill me-2"></i>Подтверждение удаления</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body" id="deleteConfirmMessage"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" id="confirmDeleteActionBtn" class="btn btn-danger fw-semibold">Удалить</button>
             </div>
         </div>
     </div>
@@ -508,12 +521,35 @@ $(document).ready(function() {
         }
     }
 
+    function showViewCowsAlert(msg, type) {
+        $('#viewCowsAlert').removeClass('d-none alert-danger alert-warning alert-success').addClass('alert-' + (type || 'danger')).text(msg);
+    }
+
+    let pendingDeleteCallback = null;
+    function askDeleteConfirm(message, onConfirm) {
+        $('#deleteConfirmMessage').text(message);
+        pendingDeleteCallback = onConfirm;
+        if (window.bootstrap) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('deleteConfirmModal')).show();
+        }
+    }
+    $('#confirmDeleteActionBtn').click(function() {
+        if (window.bootstrap) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('deleteConfirmModal')).hide();
+        }
+        if (typeof pendingDeleteCallback === 'function') {
+            const cb = pendingDeleteCallback;
+            pendingDeleteCallback = null;
+            cb();
+        }
+    });
+
     $('#bulkDeleteBtn').click(function() {
         var ids = $('.cow-checkbox:checked').map(function() {
             return parseInt($(this).val(), 10);
         }).get();
         if (!ids.length) return;
-        if (confirm('Вы уверены, что хотите удалить выбранные записи (' + ids.length + ' шт.)?')) {
+        askDeleteConfirm('Вы уверены, что хотите удалить выбранные записи (' + ids.length + ' шт.)?', function() {
             $.ajax({
                 url: '/bulk_delete_cows',
                 type: 'POST',
@@ -524,27 +560,27 @@ $(document).ready(function() {
                         $('#selectAll').prop('checked', false);
                         loadPage(currentPage);
                     } else {
-                        alert((res && res.error) || 'Не удалось удалить выбранные записи');
+                        showViewCowsAlert((res && res.error) || 'Не удалось удалить выбранные записи', 'danger');
                     }
                 },
                 error: function() {
-                    alert('Ошибка при массовом удалении записей');
+                    showViewCowsAlert('Ошибка при массовом удалении записей', 'danger');
                 }
             });
-        }
+        });
     });
 
     // Одиночное удаление
     $(document).on('click', '.delete-cow-btn', function() {
         var cowId = $(this).data('cow-id');
         var cowNum = $(this).data('cow-number');
-        if (confirm('Вы уверены, что хотите удалить запись ' + cowNum + '?')) {
+        askDeleteConfirm('Вы уверены, что хотите удалить запись ' + cowNum + '?', function() {
             $.post('/delete_cow/' + cowId, function() {
                 loadPage(currentPage);
             }).fail(function() {
-                location.reload();
+                showViewCowsAlert('Не удалось удалить запись ' + cowNum, 'danger');
             });
-        }
+        });
     });
 
     var urlParams = new URLSearchParams(window.location.search);
@@ -632,17 +668,23 @@ $(document).ready(function() {
     var paramRepro = urlParams.get('repro_filter');
     if (paramRepro) {
         $('#repro_filter').val(paramRepro);
-        var rTxt = paramRepro === 'pregnant' ? 'Выбытие стельных' : (paramRepro === 'stillborn' ? 'Мертворождения' : 'Глубокостельные');
+        var rTxt = paramRepro === 'pregnant' ? 'Выбытие стельных' : 'Глубокостельные';
         filterLabels.push(rTxt);
         hasInitial = true;
     }
 
     var paramStart = urlParams.get('start_date');
     var paramEnd = urlParams.get('end_date');
-    if (paramStart && paramEnd) {
-        $('#start_date_filter').val(paramStart);
-        $('#end_date_filter').val(paramEnd);
-        filterLabels.push('Период: ' + paramStart + ' — ' + paramEnd);
+    if (paramStart || paramEnd) {
+        if (paramStart) $('#start_date_filter').val(paramStart);
+        if (paramEnd) $('#end_date_filter').val(paramEnd);
+        if (paramStart && paramEnd) {
+            filterLabels.push('Период: ' + paramStart + ' — ' + paramEnd);
+        } else if (paramStart) {
+            filterLabels.push('Дата с: ' + paramStart);
+        } else {
+            filterLabels.push('Дата по: ' + paramEnd);
+        }
         hasInitial = true;
     }
 

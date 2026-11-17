@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Акт на выбытие (Форма 209-АПК РБ) - АгроУчёт PRO{% endblock %}
+{% block title %}Акт на выбытие (Форма 209-АПК РБ) - {{ org_name }}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -46,7 +46,7 @@
 
             <div class="text-center mb-4">
                 <h3 class="fw-bold mb-1">АКТ НА ВЫБЫТИЕ ЖИВОТНЫХ И ПТИЦЫ (ЗАБОЙ, ПРИРЕЗКА И ПАДЁЖ)</h3>
-                <div class="text-muted">Период: с <strong>{{ start_date }}</strong> по <strong>{{ end_date }}</strong> г. | Сельхозорганизация (МТФ): <strong>{{ farm_filter if farm_filter and farm_filter != 'all' else 'Сводный акт по организации' }}</strong></div>
+                <div class="text-muted">Период: с <strong>{{ start_date }}</strong> по <strong>{{ end_date }}</strong> г. | Организация: <strong>{{ org_name }}</strong> | Подразделение (МТФ): <strong>{{ farm_filter if farm_filter and farm_filter != 'all' else 'Сводный акт по организации' }}</strong></div>
             </div>
 
             <!-- Сводные KPI -->

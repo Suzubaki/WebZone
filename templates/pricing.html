@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Управление целями, нормативами и порогами тревог BYN - ОАО «Новая Припять»{% endblock %}
+{% block title %}Управление целями, нормативами и порогами тревог BYN - {{ org_name }}{% endblock %}
 
 {% block content %}
 <div class="container-fluid px-4 py-3">
@@ -18,7 +18,8 @@
         </div>
     </div>
 
-    <form method="POST" action="/pricing">
+    <div id="pricingValidationAlert" class="alert alert-danger d-none mb-3" role="alert"></div>
+    <form method="POST" action="{{ url_for('pricing') }}" id="pricingForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="row g-4 mb-4">
             <!-- Методика расчёта и прозрачность формул -->
@@ -39,15 +40,15 @@
                             </li>
                             <li class="list-group-item px-0 py-2">
                                 <strong>2. Выручка от сдачи мяса (выбраковка/санбрак):</strong><br>
-                                <code class="text-success">Живой вес (кг) × Закупочная цена мяса (BYN/кг)</code>
+                                <code class="text-success">Живой вес (кг) × Цена мяса (× {{ (pricing.sanitary_meat_factor * 100)|round|int }}% при санбраке)</code>
                             </li>
                             <li class="list-group-item px-0 py-2">
-                                <strong>3. Упущенная выгода от молока (до 305 DIM):</strong><br>
-                                <code class="text-info">(305 - DIM) × Суточный удой (кг) × Цена молока (BYN/кг)</code>
+                                <strong>3. Упущенная выгода от молока (до {{ pricing.standard_lactation_days }} DIM):</strong><br>
+                                <code class="text-info">({{ pricing.standard_lactation_days }} - DIM) × Суточный удой (по умолч. {{ pricing.default_daily_milk_kg }} кг) × Цена молока (BYN/кг)</code>
                             </li>
                             <li class="list-group-item px-0 py-2">
                                 <strong>4. Неокупаемость первотёлок (1 лакт.):</strong><br>
-                                <code class="text-warning">(1 - DIM / 305) × Стоимость ремонта (BYN)</code>
+                                <code class="text-warning">(1 - DIM / {{ pricing.standard_lactation_days }}) × Стоимость ремонта (BYN)</code>
                             </li>
                             <li class="list-group-item px-0 py-2">
                                 <strong>5. Чистый экономический ущерб:</strong><br>
@@ -202,16 +203,140 @@
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-                        <div class="d-flex justify-content-end mt-4">
-                            <button type="submit" class="btn btn-success px-5 py-2 fw-bold shadow">
-                                <i class="bi bi-check-circle-fill me-2"></i> Сохранить все нормативы и пороги
-                            </button>
+        <!-- Секция 3: Реквизиты организации, зоотехнические коэффициенты и пороги тревог -->
+        <div class="row g-4 mb-4">
+            <div class="col-lg-5">
+                <div class="card shadow-sm border-0 rounded-4 overflow-hidden h-100">
+                    <div class="card-header bg-dark text-white py-3 px-4 d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-building me-2 text-warning"></i> 3. Реквизиты организации (Акты и AITS)</h5>
+                    </div>
+                    <div class="card-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Наименование сельхозорганизации</label>
+                            <input type="text" class="form-control" name="farm_org_name" maxlength="160" value="{{ pricing.farm_org_name }}" required>
+                            <small class="text-muted">Отображается в интерфейсе, печатных формах 209/210-АПК и реестрах AITS.</small>
+                        </div>
+                        <div class="mb-0">
+                            <label class="form-label small fw-bold">УНП владельца (для ГИС «AITS»)</label>
+                            <input type="text" class="form-control font-monospace" name="farm_unp" maxlength="32" value="{{ pricing.farm_unp }}" required>
+                            <small class="text-muted">9-значный учётный номер плательщика в XML/CSV реестре AITS.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-7">
+                <div class="card shadow-sm border-0 rounded-4 overflow-hidden h-100">
+                    <div class="card-header bg-dark text-white py-3 px-4 d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-cpu text-info me-2"></i> 4. Аналитические коэффициенты, матрица и алерты</h5>
+                    </div>
+                    <div class="card-body p-4">
+                        <div class="row g-3">
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Коэфф. санприрезки (0–1)</label>
+                                <input type="number" step="0.01" min="0" max="1" class="form-control form-control-sm" name="sanitary_meat_factor" id="sanitary_meat_factor" value="{{ pricing.sanitary_meat_factor }}" required>
+                                <small class="text-muted">Напр. 0.70 = 70% цены</small>
+                            </div>
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Станд. лактация (дн.)</label>
+                                <input type="number" step="1" min="1" max="500" class="form-control form-control-sm" name="standard_lactation_days" value="{{ pricing.standard_lactation_days }}" required>
+                                <small class="text-muted">Обычно 305 дн.</small>
+                            </div>
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Удой по умолч. (кг/сут)</label>
+                                <input type="number" step="0.1" min="0" class="form-control form-control-sm" name="default_daily_milk_kg" value="{{ pricing.default_daily_milk_kg }}" required>
+                            </div>
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Лидер стада (кг/лакт.)</label>
+                                <input type="number" step="100" min="1000" class="form-control form-control-sm" name="high_yield_threshold_kg" value="{{ pricing.high_yield_threshold_kg }}" required>
+                            </div>
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Ср. масса коровы (кг)</label>
+                                <input type="number" step="1" min="1" class="form-control form-control-sm" name="default_weight_cow" value="{{ pricing.default_weight_cow }}" required>
+                            </div>
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Ср. масса молодняка (кг)</label>
+                                <input type="number" step="1" min="1" class="form-control form-control-sm" name="default_weight_youngstock" value="{{ pricing.default_weight_youngstock }}" required>
+                            </div>
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Ср. масса телёнка (кг)</label>
+                                <input type="number" step="1" min="1" class="form-control form-control-sm" name="default_weight_calf" value="{{ pricing.default_weight_calf }}" required>
+                            </div>
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Матрица: Внимание (%)</label>
+                                <input type="number" step="0.5" min="0" max="100" class="form-control form-control-sm" name="matrix_warn_pct" id="matrix_warn_pct" value="{{ pricing.matrix_warn_pct }}" required>
+                            </div>
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Матрица: Критично (%)</label>
+                                <input type="number" step="0.5" min="0" max="100" class="form-control form-control-sm" name="matrix_crit_pct" id="matrix_crit_pct" value="{{ pricing.matrix_crit_pct }}" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold">Коэфф. тревоги роста падежа (x)</label>
+                                <input type="number" step="0.05" min="1" class="form-control form-control-sm" name="alert_death_growth_ratio" value="{{ pricing.alert_death_growth_ratio }}" required>
+                                <small class="text-muted">Напр. 1.40 = срабатывает при росте на +40%</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold">Мин. случаев для кластера диагноза</label>
+                                <input type="number" step="1" min="2" class="form-control form-control-sm" name="alert_cluster_min_count" value="{{ pricing.alert_cluster_min_count }}" required>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
+
+        <div class="d-flex justify-content-end mb-4">
+            <button type="submit" class="btn btn-success btn-lg px-5 fw-bold shadow">
+                <i class="bi bi-check-circle-fill me-2"></i> Сохранить все нормативы, пороги и настройки
+            </button>
+        </div>
     </form>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form[action="/pricing"]');
+    const alertBox = document.getElementById('pricingValidationAlert');
+    if (!form || !alertBox) return;
+
+    const triples = [
+        ['Выбытие новотельных (0–30 DIM)', 'norm_fresh_cow_disposal', 'warn_fresh_cow_disposal', 'crit_fresh_cow_disposal'],
+        ['Выбраковка первотёлок', 'norm_first_lactation_culling', 'warn_first_lactation_culling', 'crit_first_lactation_culling'],
+        ['Доля падежа (летальность)', 'norm_mortality_rate', 'warn_mortality_rate', 'crit_mortality_rate'],
+        ['Ортопедические патологии', 'norm_locomotor_disorders', 'warn_locomotor_disorders', 'crit_locomotor_disorders'],
+        ['Заболевания вымени', 'norm_mastitis_disorders', 'warn_mastitis_disorders', 'crit_mastitis_disorders']
+    ];
+
+    form.addEventListener('submit', function(e) {
+        alertBox.classList.add('d-none');
+        for (const [label, kn, kw, kc] of triples) {
+            const vn = parseFloat(form.querySelector(`[name="${kn}"]`)?.value);
+            const vw = parseFloat(form.querySelector(`[name="${kw}"]`)?.value);
+            const vc = parseFloat(form.querySelector(`[name="${kc}"]`)?.value);
+            if (!(vn <= vw && vw <= vc)) {
+                e.preventDefault();
+                alertBox.textContent = `Ошибка порогов «${label}»: должно выполняться Норма ≤ Внимание ≤ Критично (${vn} ≤ ${vw} ≤ ${vc}).`;
+                alertBox.classList.remove('d-none');
+                alertBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+        }
+        const mw = parseFloat(document.getElementById('matrix_warn_pct')?.value);
+        const mc = parseFloat(document.getElementById('matrix_crit_pct')?.value);
+        if (mw > mc) {
+            e.preventDefault();
+            alertBox.textContent = `Порог внимания матрицы (${mw}%) не может превышать критический (${mc}%).`;
+            alertBox.classList.remove('d-none');
+            alertBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    });
+});
+</script>
 {% endblock %}

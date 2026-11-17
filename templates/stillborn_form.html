@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}
-{% if action == 'edit' %}Редактирование акта: {{ record.record_code }}{% else %}Регистрация мертворождения / аборта{% endif %} - АгроУчёт PRO
+{% if action == 'edit' %}Редактирование акта: {{ record.record_code }}{% else %}Регистрация мертворождения / аборта{% endif %} - {{ org_name }}
 {% endblock %}
 
 {% block content %}
@@ -43,14 +43,14 @@
                         <div class="col-md-4">
                             <label for="event_date" class="form-label fw-semibold">Дата события (отёла / аборта) *</label>
                             <input type="date" class="form-control" id="event_date" name="event_date" 
-                                   value="{{ record.event_date if action == 'edit' else today }}" required>
+                                   value="{{ record.event_date if record else today }}" max="{{ today }}" required>
                         </div>
 
                         <div class="col-md-5">
                             <label for="event_type" class="form-label fw-semibold">Тип события *</label>
                             <select class="form-select" id="event_type" name="event_type" required>
                                 {% for et in event_types %}
-                                <option value="{{ et }}" {% if (record.event_type if action == 'edit' else '') == et %}selected{% endif %}>
+                                <option value="{{ et }}" {% if (record.event_type if record else '') == et %}selected{% endif %}>
                                     {{ et }}
                                 </option>
                                 {% endfor %}
@@ -60,7 +60,7 @@
                         <div class="col-md-3">
                             <label for="gestation_days" class="form-label fw-semibold">Срок стельности (дней)</label>
                             <input type="number" class="form-control" id="gestation_days" name="gestation_days" min="0" max="320" 
-                                   value="{{ record.gestation_days if action == 'edit' else '280' }}" placeholder="Напр. 280">
+                                   value="{{ record.gestation_days if record else '280' }}" placeholder="Напр. 280">
                             <div class="form-text small">Норма доношенности: ~280–285 дн.</div>
                         </div>
 
@@ -74,7 +74,7 @@
                         <div class="col-md-4">
                             <label for="mother_tag" class="form-label fw-semibold">AITS / Ушная бирка матери</label>
                             <input type="text" class="form-control" id="mother_tag" name="mother_tag" 
-                                   value="{{ record.mother_tag if action == 'edit' else '' }}" placeholder="Например, BY 04 12345678">
+                                   value="{{ (record.mother_tag or '') if record else '' }}" placeholder="Например, BY 04 12345678">
                             <div class="form-text small">Инвентарный номер дойной коровы / нетели</div>
                         </div>
 
@@ -82,7 +82,7 @@
                             <label for="mother_group" class="form-label fw-semibold">Группа коровы-матери</label>
                             <select class="form-select" id="mother_group" name="mother_group">
                                 {% for mg in mother_groups %}
-                                <option value="{{ mg }}" {% if (record.mother_group if action == 'edit' else '') == mg %}selected{% endif %}>
+                                <option value="{{ mg }}" {% if (record.mother_group if record else '') == mg %}selected{% endif %}>
                                     {{ mg }}
                                 </option>
                                 {% endfor %}
@@ -93,7 +93,7 @@
                             <label for="mother_condition" class="form-label fw-semibold">Состояние матери после отёла</label>
                             <select class="form-select" id="mother_condition" name="mother_condition">
                                 {% for mc in mother_conditions %}
-                                <option value="{{ mc }}" {% if (record.mother_condition if action == 'edit' else '') == mc %}selected{% endif %}>
+                                <option value="{{ mc }}" {% if (record.mother_condition if record else '') == mc %}selected{% endif %}>
                                     {{ mc }}
                                 </option>
                                 {% endfor %}
@@ -111,7 +111,7 @@
                             <label for="fetus_sex" class="form-label fw-semibold">Пол плода</label>
                             <select class="form-select" id="fetus_sex" name="fetus_sex">
                                 {% for fs in fetus_sexes %}
-                                <option value="{{ fs }}" {% if (record.fetus_sex if action == 'edit' else '') == fs %}selected{% endif %}>
+                                <option value="{{ fs }}" {% if (record.fetus_sex if record else '') == fs %}selected{% endif %}>
                                     {{ fs }}
                                 </option>
                                 {% endfor %}
@@ -121,23 +121,27 @@
                         <div class="col-md-3">
                             <label for="fetus_weight" class="form-label fw-semibold">Масса плода (кг)</label>
                             <input type="number" step="0.1" class="form-control" id="fetus_weight" name="fetus_weight" min="0" max="80" 
-                                   value="{{ record.fetus_weight if action == 'edit' else '28.0' }}" placeholder="кг">
+                                   value="{{ record.fetus_weight if (record and record.fetus_weight is not none) else '28.0' }}" placeholder="кг">
                         </div>
 
+                        {% set is_custom_cause = record and record.cause and (record.cause not in causes) %}
                         <div class="col-md-6">
                             <label for="cause" class="form-label fw-semibold">Причина гибели плода (диагноз) *</label>
                             <select class="form-select" id="cause" name="cause" required>
                                 {% for c in causes %}
-                                <option value="{{ c }}" {% if (record.cause if action == 'edit' else '') == c %}selected{% endif %}>
+                                {% set selected_cause = 'Другое' if is_custom_cause else (record.cause if record else '') %}
+                                <option value="{{ c }}" {% if selected_cause == c %}selected{% endif %}>
                                     {{ c }}
                                 </option>
                                 {% endfor %}
                             </select>
                         </div>
 
-                        <div class="col-12 d-none" id="customCauseBlock">
+                        <div class="col-12 {% if not is_custom_cause %}d-none{% endif %}" id="customCauseBlock">
                             <label for="custom_cause" class="form-label fw-semibold">Уточнение другой причины / диагноза</label>
-                            <input type="text" class="form-control" id="custom_cause" name="custom_cause" placeholder="Введите индивидуальный ветеринарный диагноз...">
+                            <input type="text" class="form-control" id="custom_cause" name="custom_cause"
+                                   value="{{ record.cause if is_custom_cause else '' }}"
+                                   placeholder="Введите индивидуальный ветеринарный диагноз...">
                         </div>
 
                         <!-- Блок 4: Заключение -->
@@ -150,13 +154,13 @@
                         <div class="col-md-4">
                             <label for="attendant" class="form-label fw-semibold">Принял отёл / Ветврач</label>
                             <input type="text" class="form-control" id="attendant" name="attendant" 
-                                   value="{{ record.attendant if action == 'edit' else 'Дежурный ветврач' }}" placeholder="ФИО специалиста">
+                                   value="{{ (record.attendant or '') if record else 'Дежурный ветврач' }}" placeholder="ФИО специалиста">
                         </div>
 
                         <div class="col-md-8">
                             <label for="notes" class="form-label fw-semibold">Заключение ветеринарной комиссии / Примечание</label>
                             <input type="text" class="form-control" id="notes" name="notes" 
-                                   value="{{ record.notes if action == 'edit' else '' }}" placeholder="Особенности отёла, патологоанатомические признаки, рекомендации...">
+                                   value="{{ (record.notes or '') if record else '' }}" placeholder="Особенности отёла, патологоанатомические признаки, рекомендации...">
                         </div>
                     </div>
 
@@ -178,6 +182,8 @@
 
 {% block extra_js %}
 <script>
+const STILLBORN_PREFILL = {{ stillborn_prefill | tojson }};
+
 $(document).ready(function() {
     function toggleCustomCause() {
         if ($('#cause').val() === 'Другое') {
@@ -189,21 +195,16 @@ $(document).ready(function() {
     $('#cause').change(toggleCustomCause);
     toggleCustomCause();
 
-    // Автоматическая корректировка срока стельности при выборе типа события
+    // Автоматическая корректировка срока стельности и веса плода по централизованной карте STILLBORN_PREFILL
     $('#event_type').change(function() {
-        var val = $(this).val();
-        if (val.indexOf('1-й триместр') !== -1) {
-            $('#gestation_days').val(75);
-            $('#fetus_weight').val(5.0);
-        } else if (val.indexOf('2-й триместр') !== -1) {
-            $('#gestation_days').val(140);
-            $('#fetus_weight').val(14.0);
-        } else if (val.indexOf('3-й триместр') !== -1) {
-            $('#gestation_days').val(220);
-            $('#fetus_weight').val(22.0);
-        } else if (val.indexOf('в срок') !== -1) {
-            $('#gestation_days').val(280);
-            $('#fetus_weight').val(32.0);
+        var val = ($(this).val() || '').toLowerCase();
+        for (var i = 0; i < STILLBORN_PREFILL.length; i++) {
+            var item = STILLBORN_PREFILL[i];
+            if (val.indexOf(item.match) !== -1) {
+                $('#gestation_days').val(item.gestation);
+                $('#fetus_weight').val(item.weight);
+                break;
+            }
         }
     });
 });

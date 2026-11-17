@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Управление пользователями - Учёт выбытия скота{% endblock %}
+{% block title %}Управление пользователями - {{ org_name }}{% endblock %}
 
 {% block content %}
 <div class="row">
@@ -97,28 +97,52 @@
         </div>
     </div>
 </div>
+
+<div class="modal fade" id="deleteUserModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>Удаление пользователя</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+            </div>
+            <div class="modal-body">
+                Вы уверены, что хотите удалить пользователя <strong id="deleteUserName"></strong>?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteUserBtn">Удалить</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
 $(document).ready(function() {
+    let pendingUserId = null;
+    const modalEl = document.getElementById('deleteUserModal');
+    const modalObj = modalEl ? new bootstrap.Modal(modalEl) : null;
+
     $('.delete-user-btn').click(function(e) {
         e.preventDefault();
-        var userId = $(this).data('user-id');
-        var username = $(this).data('user-name');
-        
-        if (confirm('Вы уверены, что хотите удалить пользователя "' + username + '"?')) {
-            var form = $('<form>', {
-                'method': 'POST',
-                'action': '/delete_user/' + userId
-            });
-            form.append($('<input>', {
-                'type': 'hidden',
-                'name': 'csrf_token',
-                'value': $('meta[name="csrf-token"]').attr('content') || ''
-            }));
-            form.appendTo('body').submit();
-        }
+        pendingUserId = $(this).data('user-id');
+        $('#deleteUserName').text($(this).data('user-name') || '');
+        if (modalObj) modalObj.show();
+    });
+
+    $('#confirmDeleteUserBtn').click(function() {
+        if (!pendingUserId) return;
+        var form = $('<form>', {
+            'method': 'POST',
+            'action': '/delete_user/' + pendingUserId
+        });
+        form.append($('<input>', {
+            'type': 'hidden',
+            'name': 'csrf_token',
+            'value': $('meta[name="csrf-token"]').attr('content') || ''
+        }));
+        form.appendTo('body').submit();
     });
 });
 </script>

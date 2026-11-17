@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Акт выбраковки (Форма 210-АПК РБ) - АгроУчёт PRO{% endblock %}
+{% block title %}Акт выбраковки (Форма 210-АПК РБ) - {{ org_name }}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -50,7 +50,7 @@
                     <div class="mt-2 text-start border p-2 rounded">
                         <strong>УТВЕРЖДАЮ</strong><br>
                         Руководитель: ___________________<br>
-                        «____» _______________ 2026 г.
+                        «____» _______________ {{ current_year }} г.
                     </div>
                 </div>
             </div>
@@ -82,7 +82,7 @@
                             <td class="text-center">{{ loop.index }}</td>
                             <td class="text-center fw-bold">{{ cow.ear_tag or cow.cow_id }}</td>
                             <td>{{ cow.farm_name }}</td>
-                            <td>{{ cow.breed or 'Черно-пёстрая' }}</td>
+                            <td>{{ cow.breed or default_breed or 'Черно-пёстрая белорусской селекции' }}</td>
                             <td class="text-center">{{ cow.lactation or '-' }}</td>
                             <td class="text-center">{{ cow.weight or '-' }}</td>
                             <td class="text-center">{{ cow.milk_yield or '-' }}</td>

@@ -23,12 +23,12 @@ def compute_lactation_phase(age_group, lactation_days, lactation=None):
         return 'Молодняк (до 6 мес.)'
     if 'быч' in grp or 'откорм' in grp:
         return 'Бычки на откорме'
-    if 'молодняк' in grp or 'тёлк' in grp or 'телк' in grp or 'ремонтн' in grp:
-        return 'Молодняк (6–18 мес.)'
     if 'нетел' in grp:
         return 'Нетели'
     if 'сухосто' in grp:
         return 'Сухостой'
+    if ('молодняк' in grp or 'ремонтн' in grp or (('тёлк' in grp or 'телк' in grp) and 'перво' not in grp)):
+        return 'Молодняк (6–18 мес.)'
 
     dim = None
     if lactation_days is not None and str(lactation_days).strip() != '':
@@ -69,10 +69,6 @@ def build_age_group_sql(filter_val):
         return "(LOWER(age_group) LIKE '%телят%' OR LOWER(age_group) LIKE '%молодняк%' OR LOWER(age_group) LIKE '%быч%' OR LOWER(age_group) LIKE '%ремонтн%')", []
     if any(k in f_lower for k in ['телят', 'до 6', '0-6', '0–6', 'новорожд']):
         return "(LOWER(age_group) LIKE '%телят%' OR LOWER(age_group) LIKE '%до 6%' OR LOWER(age_group) LIKE '%0-6%' OR LOWER(age_group) LIKE '%0–6%' OR LOWER(age_group) LIKE '%новорожд%')", []
-    if any(k in f_lower for k in ['молодняк', '6-18', '6–18', '6-12', '6–12', 'ремонтн', 'тёлк', 'телк']):
-        return "((LOWER(age_group) LIKE '%молодняк%' OR LOWER(age_group) LIKE '%6-18%' OR LOWER(age_group) LIKE '%6–18%' OR LOWER(age_group) LIKE '%6-12%' OR LOWER(age_group) LIKE '%ремонтн%' OR LOWER(age_group) LIKE '%тёлк%' OR LOWER(age_group) LIKE '%телк%') AND LOWER(age_group) NOT LIKE '%телят%')", []
-    if any(k in f_lower for k in ['нетел', '18']):
-        return "(LOWER(age_group) LIKE '%нетел%' OR LOWER(age_group) LIKE '%18%')", []
     if any(k in f_lower for k in ['быч', 'бык', 'откорм']):
         return "(LOWER(age_group) LIKE '%быч%' OR LOWER(age_group) LIKE '%бык%' OR LOWER(age_group) LIKE '%откорм%')", []
     if 'сухосто' in f_lower:
@@ -83,6 +79,10 @@ def build_age_group_sql(filter_val):
         return f"((LOWER(age_group) LIKE '%первотел%' OR LOWER(age_group) LIKE '%первотёл%' OR LOWER(age_group) LIKE '%1-я лакт%' OR LOWER(age_group) LIKE '%1-й лакт%' OR LOWER(age_group) LIKE '%1 лакт%' OR lactation = 1) AND {_adult_lactating_sql()})", []
     if any(k in f_lower for k in ['полновозраст', '2+ лакт', '2+', '2 лакт', 'старше 2']):
         return f"((LOWER(age_group) LIKE '%полновозраст%' OR LOWER(age_group) LIKE '%2+%' OR LOWER(age_group) LIKE '%2 лакт%' OR lactation > 1 OR (LOWER(age_group) LIKE '%дойное%' AND (lactation IS NULL OR lactation != 1))) AND {_adult_lactating_sql()})", []
+    if any(k in f_lower for k in ['нетел', '18']) and '6-18' not in f_lower and '6–18' not in f_lower:
+        return "(LOWER(age_group) LIKE '%нетел%' OR (LOWER(age_group) LIKE '%18%' AND LOWER(age_group) NOT LIKE '%молодняк%'))", []
+    if any(k in f_lower for k in ['молодняк', '6-18', '6–18', '6-12', '6–12', 'ремонтн', 'тёлк', 'телк']):
+        return "((LOWER(age_group) LIKE '%молодняк%' OR LOWER(age_group) LIKE '%6-18%' OR LOWER(age_group) LIKE '%6–18%' OR LOWER(age_group) LIKE '%6-12%' OR LOWER(age_group) LIKE '%ремонтн%' OR (LOWER(age_group) LIKE '%тёлк%' AND LOWER(age_group) NOT LIKE '%перво%') OR (LOWER(age_group) LIKE '%телк%' AND LOWER(age_group) NOT LIKE '%перво%')) AND LOWER(age_group) NOT LIKE '%телят%')", []
     return "(age_group = ? OR LOWER(age_group) LIKE ?)", [filter_val, f"%{f_lower}%"]
 
 def build_lactation_phase_sql(phase_val):
@@ -151,7 +151,7 @@ def view_cows():
     end_date = request.args.get('end_date', '').strip()
     period = request.args.get('period', '').strip()
     
-    where_parts = []
+    where_parts = ["COALESCE(is_stillborn, 0) = 0"]
     base_params = []
     if user_type != 'admin':
         where_parts.append("farm_name = ?")
@@ -197,8 +197,15 @@ def view_cows():
         where_parts.append("(gestation_days >= 180 OR (is_pregnant = 1 AND LOWER(COALESCE(age_group,'')) LIKE '%сухосто%'))")
 
     if start_date and end_date:
+        s_dt, e_dt = (start_date, end_date) if start_date <= end_date else (end_date, start_date)
         where_parts.append("disposal_date BETWEEN ? AND ?")
-        base_params.extend([start_date, end_date])
+        base_params.extend([s_dt, e_dt])
+    elif start_date:
+        where_parts.append("disposal_date >= ?")
+        base_params.append(start_date)
+    elif end_date:
+        where_parts.append("disposal_date <= ?")
+        base_params.append(end_date)
         
     initial_where = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
@@ -216,7 +223,7 @@ def view_cows():
     conn.close()
     
     cows = [dict(c) for c in cows_data]
-    return render_template('view_cows.html', cows=cows, user_type=user_type, total_count=total_count, farms=farms, categories=Config.DISPOSAL_CATEGORIES, repro_filter=repro_filter, initial_farm=farm_filter, initial_category=category_filter, initial_reason=reason_filter, initial_pathology_system=pathology_system_filter, initial_age_group=age_group_filter, initial_lactation_phase=lactation_phase_filter, initial_start_date=start_date, initial_end_date=end_date, initial_period=period)
+    return render_template('view_cows.html', cows=cows, user_type=user_type, total_count=total_count, farms=farms, categories=Config.DISPOSAL_CATEGORIES, age_groups=Config.AGE_GROUPS, breeds=Config.BREEDS, repro_filter=repro_filter, initial_farm=farm_filter, initial_category=category_filter, initial_reason=reason_filter, initial_pathology_system=pathology_system_filter, initial_age_group=age_group_filter, initial_lactation_phase=lactation_phase_filter, initial_start_date=start_date, initial_end_date=end_date, initial_period=period)
 
 @cows_bp.route('/api/cows')
 @login_required
@@ -244,7 +251,7 @@ def api_cows():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    conditions = []
+    conditions = ["COALESCE(is_stillborn, 0) = 0"]
     params = []
     
     if user_type != 'admin':
@@ -291,8 +298,15 @@ def api_cows():
         conditions.append("(gestation_days >= 180 OR (is_pregnant = 1 AND LOWER(COALESCE(age_group,'')) LIKE '%сухосто%'))")
 
     if start_date and end_date:
+        s_dt, e_dt = (start_date, end_date) if start_date <= end_date else (end_date, start_date)
         conditions.append("disposal_date BETWEEN ? AND ?")
-        params.extend([start_date, end_date])
+        params.extend([s_dt, e_dt])
+    elif start_date:
+        conditions.append("disposal_date >= ?")
+        params.append(start_date)
+    elif end_date:
+        conditions.append("disposal_date <= ?")
+        params.append(end_date)
         
     if search_query:
         conditions.append("(LOWER(COALESCE(cow_id,'')) LIKE ? OR LOWER(COALESCE(ear_tag,'')) LIKE ? OR LOWER(COALESCE(reason,'')) LIKE ? OR LOWER(COALESCE(farm_name,'')) LIKE ? OR LOWER(COALESCE(age_group,'')) LIKE ? OR LOWER(COALESCE(lactation_phase,'')) LIKE ?)")
@@ -342,22 +356,41 @@ def add_cow():
         return redirect(url_for('main.dashboard'))
         
     farm_name = session.get('farm_name')
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    def _render_add(form_data=None):
+        return render_template(
+            'add_cow.html',
+            categories=Config.DISPOSAL_CATEGORIES,
+            farm_name=farm_name,
+            breeds=Config.BREEDS,
+            default_breed=Config.DEFAULT_BREED,
+            age_groups=Config.AGE_GROUPS,
+            mother_groups=Config.MOTHER_GROUPS,
+            event_types=Config.STILLBIRTH_EVENT_TYPES,
+            today=today,
+            form_data=form_data or {}
+        )
     
     if request.method == 'POST':
         if request.form.get('form_mode') == 'stillborn':
-            sb_date = request.form.get('disposal_date') or datetime.now().strftime('%Y-%m-%d')
-            sb_reason = request.form.get('reason') or 'Мертворождённый телёнок (в срок)'
+            sb_date = (request.form.get('disposal_date') or today).strip()
+            if sb_date > today:
+                flash('Дата события не может быть позже сегодняшнего дня', 'danger')
+                return _render_add(request.form)
+            sb_reason = request.form.get('reason') or Config.STILLBIRTH_EVENT_TYPES[0]
             sb_mother_tag = request.form.get('ear_tag', '').strip() or None
-            sb_mother_group = request.form.get('mother_group') or 'Коровы дойного стада'
+            sb_mother_group = request.form.get('mother_group') or Config.DEFAULT_STILLBORN_MOTHER_GROUP
             sb_notes = request.form.get('notes', '').strip() or None
+            def_gest, def_w = Config.infer_stillborn_defaults(sb_reason)
             try:
-                sb_weight = float(request.form.get('weight')) if request.form.get('weight') else 25.0
+                sb_weight = float(request.form.get('weight')) if request.form.get('weight') else def_w
             except (ValueError, TypeError):
-                sb_weight = 25.0
+                sb_weight = def_w
             try:
-                sb_gest = int(request.form.get('gestation_days')) if request.form.get('gestation_days') else 280
+                sb_gest = int(request.form.get('gestation_days')) if request.form.get('gestation_days') else def_gest
             except (ValueError, TypeError):
-                sb_gest = 280
+                sb_gest = def_gest
                 
             sb_code = generate_stillborn_code(farm_name)
             conn = get_db_connection()
@@ -371,7 +404,7 @@ def add_cow():
             ''', (
                 sb_code, farm_name, sb_date, sb_mother_tag, sb_mother_group,
                 sb_reason, 'Не определён', sb_weight, sb_gest, sb_reason,
-                'Здорова, оставлена в стаде', 'Дежурный ветврач', sb_notes, session.get('user_id')
+                Config.MOTHER_CONDITIONS[0], Config.DEFAULT_ATTENDANT, sb_notes, session.get('user_id')
             ))
             new_id = cursor.lastrowid
             conn.commit()
@@ -400,15 +433,13 @@ def add_cow():
         lactation_days = lactation_days if (lactation_days is not None and str(lactation_days).strip() != '') else None
         weight = request.form.get('weight') or None
         notes = request.form.get('notes', '').strip() or None
-        age_group = request.form.get('age_group') or 'Коровы дойного стада'
-        breed = request.form.get('breed') or 'Черно-пёстрая'
+        age_group = request.form.get('age_group') or 'Полновозрастные коровы (2+ лакт.)'
+        breed = request.form.get('breed') or Config.DEFAULT_BREED
         milk_yield = request.form.get('milk_yield') or None
         book_value = request.form.get('book_value') or None
         
-        # Вычисляем физиологическую фазу лактации
         lactation_phase = compute_lactation_phase(age_group, lactation_days, lactation)
 
-        # Воспроизводство и стельность (не перезаписываем выбор пользователя втихую)
         is_pregnant_val = 1 if request.form.get('is_pregnant') in ['1', 'on', 'true'] else 0
         try:
             gestation_days_val = int(request.form.get('gestation_days')) if request.form.get('gestation_days') else 0
@@ -416,16 +447,17 @@ def add_cow():
             gestation_days_val = 0
         if gestation_days_val > 0:
             is_pregnant_val = 1
+        if not is_pregnant_val:
+            gestation_days_val = 0
         is_stillborn_val = 0
 
         if not category or not reason or not disposal_date:
             flash('Заполните обязательные поля: категория, причина и дата', 'danger')
-            return render_template('add_cow.html', categories=Config.DISPOSAL_CATEGORIES, farm_name=farm_name, breeds=Config.BREEDS, age_groups=Config.AGE_GROUPS, mother_groups=Config.MOTHER_GROUPS)
+            return _render_add(request.form)
             
-        today = datetime.now().strftime('%Y-%m-%d')
         if disposal_date > today:
             flash('Дата выбытия не может быть позже сегодняшнего дня', 'danger')
-            return render_template('add_cow.html', categories=Config.DISPOSAL_CATEGORIES, farm_name=farm_name, breeds=Config.BREEDS, age_groups=Config.AGE_GROUPS, mother_groups=Config.MOTHER_GROUPS)
+            return _render_add(request.form)
             
         cow_id = generate_cow_id(farm_name)
         
@@ -455,7 +487,7 @@ def add_cow():
         flash(f'Корова успешно добавлена с системным номером: {cow_id}', 'success')
         return redirect(url_for('cows.view_cows'))
         
-    return render_template('add_cow.html', categories=Config.DISPOSAL_CATEGORIES, farm_name=farm_name, breeds=Config.BREEDS, age_groups=Config.AGE_GROUPS, mother_groups=Config.MOTHER_GROUPS)
+    return _render_add()
 
 @cows_bp.route('/edit_cow/<int:cow_id>', methods=['GET', 'POST'])
 @login_required
@@ -463,6 +495,7 @@ def edit_cow(cow_id):
     """Редактирование записи о корове"""
     user_type = session.get('user_type')
     farm_name = session.get('farm_name')
+    today = datetime.now().strftime('%Y-%m-%d')
     
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -482,34 +515,57 @@ def edit_cow(cow_id):
     cow = dict(cow_row)
     
     if request.method == 'POST':
-        category = request.form.get('category')
-        reason = request.form.get('reason')
-        disposal_date = request.form.get('disposal_date')
+        category = (request.form.get('category') or '').strip()
+        reason = (request.form.get('reason') or '').strip()
+        disposal_date = (request.form.get('disposal_date') or '').strip()
         ear_tag = request.form.get('ear_tag', '').strip() or None
-        lactation = request.form.get('lactation') or None
-        lactation_days = request.form.get('lactation_days') or None
+        raw_lact = request.form.get('lactation')
+        lactation = raw_lact if (raw_lact is not None and str(raw_lact).strip() != '') else None
+        raw_dim = request.form.get('lactation_days')
+        lactation_days = raw_dim if (raw_dim is not None and str(raw_dim).strip() != '') else None
         weight = request.form.get('weight') or None
         notes = request.form.get('notes', '').strip() or None
-        age_group = request.form.get('age_group') or 'Коровы дойного стада'
-        breed = request.form.get('breed') or 'Черно-пёстрая'
+        age_group = request.form.get('age_group') or 'Полновозрастные коровы (2+ лакт.)'
+        breed = request.form.get('breed') or Config.DEFAULT_BREED
         milk_yield = request.form.get('milk_yield') or None
         book_value = request.form.get('book_value') or None
         
-        # Воспроизводство и стельность
         is_pregnant_val = 1 if request.form.get('is_pregnant') in ['1', 'on', 'true'] else 0
         try:
             gestation_days_val = int(request.form.get('gestation_days')) if request.form.get('gestation_days') else 0
         except (ValueError, TypeError):
             gestation_days_val = 0
+        if not is_pregnant_val:
+            gestation_days_val = 0
         is_stillborn_val = 0
 
         lactation_phase = compute_lactation_phase(age_group, lactation_days, lactation)
+
+        if not category or not reason or not disposal_date:
+            flash('Заполните обязательные поля: категория, причина и дата выбытия', 'danger')
+            cow.update({
+                'category': category or cow.get('category'),
+                'reason': reason or cow.get('reason'),
+                'disposal_date': disposal_date or cow.get('disposal_date'),
+                'ear_tag': ear_tag, 'lactation': lactation, 'lactation_days': lactation_days,
+                'weight': weight, 'notes': notes, 'age_group': age_group, 'breed': breed,
+                'milk_yield': milk_yield, 'book_value': book_value,
+                'is_pregnant': is_pregnant_val, 'gestation_days': gestation_days_val
+            })
+            conn.close()
+            return render_template('edit_cow.html', cow=cow, categories=Config.DISPOSAL_CATEGORIES, breeds=Config.BREEDS, age_groups=Config.AGE_GROUPS, today=today)
         
-        today = datetime.now().strftime('%Y-%m-%d')
         if disposal_date > today:
             flash('Дата выбытия не может быть в будущем', 'danger')
+            cow.update({
+                'category': category, 'reason': reason, 'disposal_date': disposal_date,
+                'ear_tag': ear_tag, 'lactation': lactation, 'lactation_days': lactation_days,
+                'weight': weight, 'notes': notes, 'age_group': age_group, 'breed': breed,
+                'milk_yield': milk_yield, 'book_value': book_value,
+                'is_pregnant': is_pregnant_val, 'gestation_days': gestation_days_val
+            })
             conn.close()
-            return render_template('edit_cow.html', cow=cow, categories=Config.DISPOSAL_CATEGORIES)
+            return render_template('edit_cow.html', cow=cow, categories=Config.DISPOSAL_CATEGORIES, breeds=Config.BREEDS, age_groups=Config.AGE_GROUPS, today=today)
             
         cursor.execute('''
             UPDATE cows SET 
@@ -552,7 +608,7 @@ def edit_cow(cow_id):
         return redirect(url_for('cows.view_cows'))
         
     conn.close()
-    return render_template('edit_cow.html', cow=cow, categories=Config.DISPOSAL_CATEGORIES)
+    return render_template('edit_cow.html', cow=cow, categories=Config.DISPOSAL_CATEGORIES, breeds=Config.BREEDS, age_groups=Config.AGE_GROUPS, today=today)
 
 @cows_bp.route('/delete_cow/<int:cow_id>', methods=['POST'])
 @login_required
@@ -644,21 +700,6 @@ def bulk_delete_cows():
     conn.close()
     return jsonify({'success': True, 'deleted_count': len(valid_ids)})
 
-@cows_bp.route('/add_cows_dynamic')
-@login_required
-def add_cows_dynamic():
-    """Динамическая форма множественного ввода записей"""
-    if session.get('user_type') == 'admin':
-        flash('Администраторы не могут добавлять коров', 'warning')
-        return redirect(url_for('main.dashboard'))
-        
-    return render_template('add_cows_dynamic.html', 
-                           categories=Config.DISPOSAL_CATEGORIES, 
-                           farm_name=session.get('farm_name'),
-                           breeds=Config.BREEDS,
-                           age_groups=Config.AGE_GROUPS,
-                           today=datetime.now().strftime('%Y-%m-%d'))
-
 @cows_bp.route('/add_multiple_cows', methods=['GET', 'POST'])
 @login_required
 def add_multiple_cows():
@@ -685,7 +726,7 @@ def add_multiple_cows():
                 try:
                     parsed = json.loads(raw)
                     cows_data = parsed if isinstance(parsed, list) else parsed.get('cows_data', [])
-                except:
+                except Exception:
                     pass
                     
         conn = get_db_connection()
@@ -704,18 +745,19 @@ def add_multiple_cows():
 
             # Обособленная регистрация мертворождения / аборта в stillbirth_records
             if form_mode == 'stillborn' or is_stillborn_flag:
-                sb_reason = item.get('reason') or 'Мертворождённый телёнок (в срок)'
+                sb_reason = item.get('reason') or Config.STILLBIRTH_EVENT_TYPES[0]
                 sb_mother_tag = (item.get('ear_tag') or '').strip() or None
-                sb_mother_group = item.get('mother_group') or 'Коровы дойного стада'
+                sb_mother_group = item.get('mother_group') or Config.DEFAULT_STILLBORN_MOTHER_GROUP
                 sb_notes = (item.get('notes') or '').strip() or None
+                def_gest, def_w = Config.infer_stillborn_defaults(sb_reason)
                 try:
-                    sb_weight = float(item.get('weight')) if item.get('weight') not in (None, '') else 25.0
+                    sb_weight = float(item.get('weight')) if item.get('weight') not in (None, '') else def_w
                 except (ValueError, TypeError):
-                    sb_weight = 25.0
+                    sb_weight = def_w
                 try:
-                    sb_gest = int(item.get('gestation_days')) if item.get('gestation_days') not in (None, '') else 280
+                    sb_gest = int(item.get('gestation_days')) if item.get('gestation_days') not in (None, '') else def_gest
                 except (ValueError, TypeError):
-                    sb_gest = 280
+                    sb_gest = def_gest
 
                 sb_code = generate_stillborn_code(farm_name)
                 cursor.execute('''
@@ -727,7 +769,7 @@ def add_multiple_cows():
                 ''', (
                     sb_code, farm_name, d_date, sb_mother_tag, sb_mother_group,
                     sb_reason, 'Не определён', sb_weight, sb_gest, sb_reason,
-                    'Здорова, оставлена в стаде', 'Дежурный ветврач', sb_notes, session.get('user_id')
+                    Config.MOTHER_CONDITIONS[0], Config.DEFAULT_ATTENDANT, sb_notes, session.get('user_id')
                 ))
                 added_stillborn_count += 1
                 continue
@@ -750,8 +792,8 @@ def add_multiple_cows():
 
             weight = item.get('weight') or None
             notes = (item.get('notes') or '').strip() or None
-            age_group = item.get('age_group') or 'Коровы дойного стада'
-            breed = item.get('breed') or 'Черно-пёстрая'
+            age_group = item.get('age_group') or 'Полновозрастные коровы (2+ лакт.)'
+            breed = item.get('breed') or Config.DEFAULT_BREED
             milk_yield = item.get('milk_yield') or None
             book_value = item.get('book_value') or None
 
@@ -822,24 +864,42 @@ def import_cows():
         rows_to_insert = []
         errors = []
         
+        def _parse_import_date(raw_val):
+            if isinstance(raw_val, datetime):
+                return raw_val.strftime('%Y-%m-%d')
+            txt = str(raw_val or '').strip()
+            for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%Y/%m/%d'):
+                try:
+                    return datetime.strptime(txt, fmt).strftime('%Y-%m-%d')
+                except ValueError:
+                    continue
+            return None
+
         try:
             if filename.endswith('.csv'):
-                stream = io.StringIO(file.stream.read().decode("utf-8-sig"), newline=None)
-                csv_reader = csv.reader(stream, delimiter=';' if ';' in stream.getvalue() else ',')
+                raw_text = file.stream.read().decode("utf-8-sig")
+                stream = io.StringIO(raw_text, newline=None)
+                csv_reader = csv.reader(stream, delimiter=';' if ';' in raw_text else ',')
                 header = next(csv_reader, None)
                 for line_num, row in enumerate(csv_reader, start=2):
                     if not row or len(row) < 3:
                         continue
                     cat = row[0].strip().lower()
                     rea = row[1].strip()
-                    d_date = row[2].strip()
+                    d_date = _parse_import_date(row[2])
                     ear_tag = row[3].strip() if len(row) > 3 and row[3].strip() else None
                     lact = int(row[4]) if len(row) > 4 and row[4].strip().isdigit() else None
-                    w = float(row[5].replace(',', '.')) if len(row) > 5 and row[5].strip() else None
+                    try:
+                        w = float(row[5].replace(',', '.')) if len(row) > 5 and row[5].strip() else None
+                    except ValueError:
+                        w = None
                     notes = row[6].strip() if len(row) > 6 and row[6].strip() else None
                     
-                    if cat not in ['падёж', 'выбраковка', 'санитарный']:
+                    if cat not in ['падёж', 'выбраковка', 'санитарный', 'мертворождение']:
                         errors.append(f"Строка {line_num}: недопустимая категория '{cat}'")
+                        continue
+                    if not d_date:
+                        errors.append(f"Строка {line_num}: некорректный формат даты '{row[2]}'")
                         continue
                     if d_date > today:
                         errors.append(f"Строка {line_num}: дата {d_date} позже сегодняшней")
@@ -853,24 +913,21 @@ def import_cows():
                     if not row or not row[0]:
                         continue
                     cat = str(row[0]).strip().lower()
-                    rea = str(row[1]).strip() if row[1] else ''
-                    
-                    raw_date = row[2]
-                    if isinstance(raw_date, datetime):
-                        d_date = raw_date.strftime('%Y-%m-%d')
-                    else:
-                        d_date = str(raw_date).strip()
-                        
+                    rea = str(row[1]).strip() if len(row) > 1 and row[1] else ''
+                    d_date = _parse_import_date(row[2] if len(row) > 2 else '')
                     ear_tag = str(row[3]).strip() if len(row) > 3 and row[3] else None
-                    lact = int(row[4]) if len(row) > 4 and str(row[4]).strip().isdigit() else None
+                    lact = int(row[4]) if len(row) > 4 and row[4] is not None and str(row[4]).strip().isdigit() else None
                     try:
-                        w = float(str(row[5]).replace(',', '.')) if len(row) > 5 and row[5] else None
+                        w = float(str(row[5]).replace(',', '.')) if len(row) > 5 and row[5] not in (None, '') else None
                     except ValueError:
                         w = None
                     notes = str(row[6]).strip() if len(row) > 6 and row[6] else None
                     
-                    if cat not in ['падёж', 'выбраковка', 'санитарный']:
+                    if cat not in ['падёж', 'выбраковка', 'санитарный', 'мертворождение']:
                         errors.append(f"Строка {line_num}: недопустимая категория '{cat}'")
+                        continue
+                    if not d_date:
+                        errors.append(f"Строка {line_num}: некорректный формат даты")
                         continue
                     if d_date > today:
                         errors.append(f"Строка {line_num}: дата {d_date} позже сегодняшней")
@@ -887,22 +944,44 @@ def import_cows():
         if rows_to_insert:
             conn = get_db_connection()
             cursor = conn.cursor()
-            inserted_count = 0
+            inserted_cows = 0
+            inserted_stillborn = 0
             for r in rows_to_insert:
                 cat, rea, d_date, ear_tag, lact, w, notes = r[:7]
-                cow_id = generate_cow_id(farm_name)
-                
-                # Автоопределение группы скота
-                age_group = 'Коровы дойного стада'
                 rea_low = (rea or '').lower()
                 notes_low = (notes or '').lower()
 
+                stillborn_keys = ['мертворож', 'аборт']
+                if any(k in rea_low or k in notes_low for k in stillborn_keys) or cat == 'мертворождение':
+                    sb_code = generate_stillborn_code(farm_name)
+                    e_type = 'Аборт (1-й триместр, до 90 дн.)' if 'аборт' in rea_low or 'аборт' in notes_low else Config.STILLBIRTH_EVENT_TYPES[0]
+                    def_gest, def_w = Config.infer_stillborn_defaults(e_type)
+                    cursor.execute('''
+                        INSERT INTO stillbirth_records (
+                            record_code, farm_name, event_date, mother_tag, mother_group,
+                            event_type, fetus_sex, fetus_weight, gestation_days, cause,
+                            mother_condition, attendant, notes, created_by
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        sb_code, farm_name, d_date, ear_tag, Config.DEFAULT_STILLBORN_MOTHER_GROUP,
+                        e_type, 'Не определён', w if w is not None else def_w, def_gest,
+                        rea or e_type, Config.MOTHER_CONDITIONS[0], Config.DEFAULT_ATTENDANT, notes, session.get('user_id')
+                    ))
+                    inserted_stillborn += 1
+                    continue
+
+                cow_id = generate_cow_id(farm_name)
+                
+                # Автоопределение канонической половозрастной группы скота
+                age_group = 'Полновозрастные коровы (2+ лакт.)'
+                if lact == 1:
+                    age_group = 'Коровы 1-й лактации (первотёлки)'
                 if 'тел' in rea_low or 'диспепс' in rea_low or 'тел' in notes_low:
-                    age_group = 'Телята (0–6 мес.)'
+                    age_group = 'Телята (до 6 мес.)'
                 elif 'нетел' in rea_low or 'нетел' in notes_low:
-                    age_group = 'Нетели'
+                    age_group = 'Нетели (>18 мес.)'
                 elif 'сухосто' in rea_low or 'сухосто' in notes_low:
-                    age_group = 'Коровы сухостойные'
+                    age_group = 'Сухостойные коровы'
                 elif 'быч' in rea_low or 'быч' in notes_low:
                     age_group = 'Бычки на откорме'
 
@@ -914,16 +993,11 @@ def import_cows():
                     is_pregnant = 1
                     gestation_days = 210 if 'сухосто' in age_group.lower() else 180
 
-                is_stillborn = 0
-                stillborn_keys = ['мертворож', 'аборт']
-                if any(k in rea_low or k in notes_low for k in stillborn_keys) or cat.lower() == 'мертворождение':
-                    is_stillborn = 1
-
                 cursor.execute('''
-                    INSERT INTO cows (cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, lactation_phase, weight, notes, age_group, is_pregnant, gestation_days, is_stillborn, created_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (cow_id, ear_tag, farm_name, cat, rea, d_date, lact, lact_phase, w, notes, age_group, is_pregnant, gestation_days, is_stillborn, session.get('user_id')))
-                inserted_count += 1
+                    INSERT INTO cows (cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, lactation_phase, weight, notes, age_group, breed, is_pregnant, gestation_days, is_stillborn, created_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                ''', (cow_id, ear_tag, farm_name, cat, rea, d_date, lact, lact_phase, w, notes, age_group, Config.DEFAULT_BREED, is_pregnant, gestation_days, session.get('user_id')))
+                inserted_cows += 1
             conn.commit()
             conn.close()
             
@@ -932,12 +1006,12 @@ def import_cows():
                 farm_name=farm_name,
                 action='IMPORT',
                 entity_type='COW',
-                details=f"Импортировано {inserted_count} записей из файла {file.filename}",
+                details=f"Импортировано из файла {file.filename}: {inserted_cows} выбытий, {inserted_stillborn} мертворождений/абортов",
                 user_id=session.get('user_id'),
                 ip_address=request.remote_addr
             )
             
-            flash(f'Успешно импортировано {inserted_count} коров!', 'success')
+            flash(f'Успешно импортировано записей: выбытие — {inserted_cows}, мертворождения/аборты — {inserted_stillborn}!', 'success')
             if errors:
                 flash(f'Внимание: пропущено строк с ошибками: {len(errors)}', 'warning')
             return redirect(url_for('cows.view_cows'))

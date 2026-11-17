@@ -11,7 +11,13 @@ def get_farms():
     """Получение актуального списка ферм для выпадающих списков фильтров"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('SELECT DISTINCT farm_name FROM users WHERE farm_name IS NOT NULL AND farm_name != "" ORDER BY farm_name')
+    cursor.execute('''
+        SELECT DISTINCT farm_name FROM (
+            SELECT farm_name FROM users WHERE farm_name IS NOT NULL AND farm_name != ''
+            UNION
+            SELECT farm_name FROM cows WHERE farm_name IS NOT NULL AND farm_name != ''
+        ) ORDER BY farm_name
+    ''')
     farms = [r['farm_name'] for r in cursor.fetchall()]
     conn.close()
     return jsonify(farms)

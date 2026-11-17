@@ -5,6 +5,7 @@ from flask import (
     Blueprint, render_template, request, session, 
     send_file, Response
 )
+from config import Config
 from database import get_db_connection, get_setting
 from matrix_report import generate_matrix_excel_report
 from report_generator import (
@@ -19,6 +20,24 @@ from .auth import login_required, admin_required
 
 reports_bp = Blueprint('reports', __name__)
 
+def _normalize_report_dates(start_raw, end_raw):
+    now = datetime.now()
+    default_start = now.replace(day=1).strftime('%Y-%m-%d')
+    default_end = now.strftime('%Y-%m-%d')
+    start_date = (start_raw or '').strip() or default_start
+    end_date = (end_raw or '').strip() or default_end
+    for val, fallback in ((start_date, default_start), (end_date, default_end)):
+        try:
+            datetime.strptime(val, '%Y-%m-%d')
+        except ValueError:
+            if val == start_date:
+                start_date = fallback
+            else:
+                end_date = fallback
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+    return start_date, end_date
+
 @reports_bp.route('/reports')
 @login_required
 def reports():
@@ -31,8 +50,7 @@ def generate_report():
     """Формирование сводных актов, списков и выгрузок в различных форматах"""
     report_type = request.form.get('report_type')
     report_format = request.form.get('format')
-    start_date = request.form.get('start_date')
-    end_date = request.form.get('end_date')
+    start_date, end_date = _normalize_report_dates(request.form.get('start_date'), request.form.get('end_date'))
     farm_filter = request.form.get('farm_filter')
     report_category = request.form.get('report_category')
     
@@ -40,7 +58,7 @@ def generate_report():
         farm_filter = session.get('farm_name')
         
     # 1. Акт на выбытие животных и птицы (Форма № 209-АПК / СП-54)
-    if report_type in ['form_209_apk', 'sp54']:
+    if report_type in ['form_209_apk', 'sp54'] and report_format not in ['preview', 'csv']:
         wb = generate_form_209_apk_excel(start_date, end_date, farm_filter)
         filename = f"akt_209_apk_RB_{start_date}_{end_date}.xlsx"
         out = io.BytesIO()
@@ -53,7 +71,7 @@ def generate_report():
         if report_format == 'preview':
             conn = get_db_connection()
             cursor = conn.cursor()
-            where = "WHERE disposal_date BETWEEN ? AND ? AND category IN ('выбраковка', 'санитарный')"
+            where = "WHERE disposal_date BETWEEN ? AND ? AND category IN ('выбраковка', 'санитарный') AND COALESCE(is_stillborn, 0) = 0"
             params = [start_date, end_date]
             if farm_filter and farm_filter != 'all':
                 where += " AND farm_name = ?"
@@ -64,10 +82,11 @@ def generate_report():
             
             total_weight = sum(float(c['weight'] or 0) for c in cows_list)
             total_value = sum(float(c['book_value'] or 0) for c in cows_list)
-            org_name = get_setting('farm_org_name', 'ОАО «Новая Припять»')
+            org_name = get_setting('farm_org_name', Config.DEFAULT_ORG_NAME)
             return render_template('form_210_preview.html', cows=cows_list, total_weight=f"{total_weight:.1f}", 
                                    total_value=f"{total_value:.2f}", start_date=start_date, end_date=end_date, 
-                                   farm_filter=farm_filter, org_name=org_name)
+                                   farm_filter=farm_filter, org_name=org_name,
+                                   default_breed=Config.DEFAULT_BREED)
         else:
             wb = generate_form_210_apk_excel(start_date, end_date, farm_filter)
             filename = f"akt_210_apk_RB_{start_date}_{end_date}.xlsx"
@@ -106,7 +125,7 @@ def generate_report():
     elif report_format == 'preview':
         conn = get_db_connection()
         cursor = conn.cursor()
-        where = "WHERE disposal_date BETWEEN ? AND ?"
+        where = "WHERE disposal_date BETWEEN ? AND ? AND COALESCE(is_stillborn, 0) = 0"
         params = [start_date, end_date]
         if farm_filter and farm_filter != 'all':
             where += " AND farm_name = ?"
@@ -124,7 +143,8 @@ def generate_report():
             },
             'total_weight': sum(float(c['weight'] or 0) for c in cows_list)
         }
-        return render_template('report_preview.html', data=cows_list, summary=summary, start_date=start_date, end_date=end_date, farm_filter=farm_filter)
+        org_name = get_setting('farm_org_name', Config.DEFAULT_ORG_NAME)
+        return render_template('report_preview.html', data=cows_list, summary=summary, start_date=start_date, end_date=end_date, farm_filter=farm_filter, org_name=org_name)
         
     # 6. Аналитические таблицы Excel (Матрица / Структурированный / Простой)
     else:

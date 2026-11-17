@@ -4,11 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{% block title %}ОАО «Новая Припять» - Учёт выбытия скота{% endblock %}</title>
+    <title>{% block title %}{{ org_name }} - Учёт выбытия скота{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/img/logo.svg">
     <link rel="alternate icon" href="/img/logo.jpg">
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-    <link rel="preconnect" href="https://code.jquery.com" crossorigin>
+    <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
+    <link rel="dns-prefetch" href="https://code.jquery.com">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="preconnect" href="https://code.jquery.com">
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Bootstrap Icons -->
@@ -67,9 +69,9 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top shadow-sm py-2">
         <div class="container-fluid px-4">
             <a class="navbar-brand d-flex align-items-center gap-2" href="{{ url_for('index') }}">
-                <img src="/img/logo.svg" onerror="this.onerror=null; this.src='/static/img/logo.svg';" alt="ОАО Новая Припять" width="38" height="38" class="rounded-circle border border-2 border-warning shadow-sm" style="object-fit: contain; background: #064e3b;">
+                <img src="/img/logo.svg" onerror="this.onerror=null; this.src='/static/img/logo.svg';" alt="{{ org_name }}" width="38" height="38" class="rounded-circle border border-2 border-warning shadow-sm" style="object-fit: contain; background: #064e3b;">
                 <div class="lh-1">
-                    <span class="fs-6 fw-bold text-white d-block">ОАО «Новая Припять»</span>
+                    <span class="fs-6 fw-bold text-white d-block">{{ org_name }}</span>
                     <small class="text-warning fw-normal" style="font-size: 0.72rem;">Учёт и анализ выбытия КРС</small>
                 </div>
             </a>
@@ -94,8 +96,7 @@
                             <i class="bi bi-plus-circle"></i> Добавить
                         </a>
                         <ul class="dropdown-menu shadow" aria-labelledby="addCowDropdown">
-                            <li><a class="dropdown-item py-2 fw-semibold" href="{{ url_for('add_cows_dynamic') }}"><i class="bi bi-lightning-charge-fill text-warning me-2"></i>Выбытие (быстрый ввод)</a></li>
-                            <li><a class="dropdown-item py-2" href="{{ url_for('add_cow') }}"><i class="bi bi-file-earmark-plus text-primary me-2"></i>Карточка выбытия коровы</a></li>
+                            <li><a class="dropdown-item py-2 fw-semibold" href="{{ url_for('add_cow') }}"><i class="bi bi-file-earmark-plus text-primary me-2"></i>Карточка выбытия коровы</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item py-2 text-danger fw-semibold" href="{{ url_for('stillborn.add_stillborn') }}"><i class="bi bi-heartbreak-fill text-danger me-2"></i>Акт мертворождения / аборта</a></li>
                         </ul>
@@ -113,7 +114,7 @@
                             <i class="bi bi-sliders"></i> Администрирование
                         </a>
                         <ul class="dropdown-menu shadow-lg border-0" style="min-width: 260px;">
-                            <li><a class="dropdown-item py-2" href="/pricing"><i class="bi bi-calculator me-2 text-primary"></i> Нормативы цен BYN</a></li>
+                            <li><a class="dropdown-item py-2" href="{{ url_for('pricing') }}"><i class="bi bi-calculator me-2 text-primary"></i> Нормативы цен BYN</a></li>
                             <li><a class="dropdown-item py-2" href="{{ url_for('user_management') }}"><i class="bi bi-people me-2 text-success"></i> Пользователи ферм</a></li>
                             <li><a class="dropdown-item py-2" href="{{ url_for('manage_reasons') }}"><i class="bi bi-card-checklist me-2 text-info"></i> Справочник причин</a></li>
                             <li><a class="dropdown-item py-2" href="{{ url_for('backup_page') }}"><i class="bi bi-shield-lock me-2 text-warning"></i> Резервная копия (Бэкап)</a></li>
@@ -171,7 +172,7 @@
     <!-- Футер -->
     <footer class="footer py-3">
         <div class="container-fluid px-4 text-center">
-            <small>Система оперативного зооветеринарного учёта выбытия скота &copy; 2026. Формы СП-54, Excel-матрицы, аудит и аналитика.</small>
+            <small>Система оперативного зооветеринарного учёта выбытия скота &copy; {{ current_year }} {{ org_name }}. Формы 209/210-АПК, Excel-матрицы, аудит и аналитика.</small>
         </div>
     </footer>
 
