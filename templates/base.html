@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}{{ org_name }} - Учёт выбытия скота{% endblock %}</title>
-    <link rel="icon" type="image/svg+xml" href="/img/logo.svg">
-    <link rel="alternate icon" href="/img/logo.jpg">
+    <link rel="icon" type="image/png" href="/assets/aistudio/__________________________________f05f89ea.png">
+    <link rel="alternate icon" type="image/png" href="/favicon.png">
     <link rel="dns-prefetch" href="https://cdn.jsdelivr.net">
     <link rel="dns-prefetch" href="https://code.jquery.com">
     <link rel="preconnect" href="https://cdn.jsdelivr.net">
@@ -69,7 +69,7 @@
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top shadow-sm py-2">
         <div class="container-fluid px-4">
             <a class="navbar-brand d-flex align-items-center gap-2" href="{{ url_for('index') }}">
-                <img src="/img/logo.svg" onerror="this.onerror=null; this.src='/static/img/logo.svg';" alt="{{ org_name }}" width="38" height="38" class="rounded-circle border border-2 border-warning shadow-sm" style="object-fit: contain; background: #064e3b;">
+                <img src="/assets/aistudio/__________________________________f05f89ea.png" onerror="this.onerror=null; this.src='/static/img/logo.png';" alt="{{ org_name }}" width="42" height="42" class="rounded-circle border border-2 border-warning shadow-sm" style="object-fit: cover; background: #ffffff;">
                 <div class="lh-1">
                     <span class="fs-6 fw-bold text-white d-block">{{ org_name }}</span>
                     <small class="text-warning fw-normal" style="font-size: 0.72rem;">Учёт и анализ выбытия КРС</small>

@@ -3,7 +3,7 @@ import gzip
 import os
 import time
 from datetime import datetime
-from flask import Flask, session, send_file, Response, url_for, request, jsonify
+from flask import Flask, session, send_file, send_from_directory, Response, url_for, request, jsonify
 
 from config import Config
 from database import init_db, get_all_settings
@@ -97,7 +97,24 @@ LOGO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" widt
   <text x="120" y="166" font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="8.2" font-weight="700" fill="#262a2e" text-anchor="middle" letter-spacing="1.2">ОТКРЫТОЕ АКЦИОНЕРНОЕ ОБЩЕСТВО</text>
 </svg>"""
 
+NEW_LOGO_REL = os.path.join('public', 'assets', 'aistudio', '__________________________________f05f89ea.png')
+
+def _get_new_logo_path():
+    candidates = [
+        os.path.join(app.root_path, NEW_LOGO_REL),
+        os.path.join(app.root_path, 'static', 'img', 'logo.png'),
+        os.path.join(app.root_path, 'public', 'img', 'logo.png'),
+    ]
+    for c in candidates:
+        if os.path.exists(c) and os.path.isfile(c):
+            return c
+    return None
+
 def _serve_logo(filename):
+    if filename.startswith('logo.'):
+        new_logo = _get_new_logo_path()
+        if new_logo:
+            return send_file(new_logo, mimetype='image/png')
     search_dirs = [
         os.path.join(app.root_path, 'static', 'img'),
         os.path.join(app.root_path, 'public', 'img'),
@@ -111,6 +128,11 @@ def _serve_logo(filename):
     return Response(LOGO_SVG, mimetype='image/svg+xml')
 
 # Регистрация маршрутов раздачи статических ассетов
+@app.route('/assets/<path:filename>')
+def serve_public_assets(filename):
+    assets_dir = os.path.join(app.root_path, 'public', 'assets')
+    return send_from_directory(assets_dir, filename)
+
 @app.route('/img/<path:filename>')
 @app.route('/static/img/<path:filename>')
 def serve_img(filename):
@@ -120,14 +142,19 @@ def serve_img(filename):
 @app.route('/favicon.png')
 @app.route('/favicon.svg')
 def serve_favicon():
+    new_logo = _get_new_logo_path()
+    if new_logo:
+        return send_file(new_logo, mimetype='image/png')
     return Response(LOGO_SVG, mimetype='image/svg+xml')
 
 @app.route('/logo.jpg')
 @app.route('/logo.svg')
+@app.route('/logo.png')
 @app.route('/img/logo.jpg')
 @app.route('/img/logo.svg')
+@app.route('/img/logo.png')
 def serve_logo_direct():
-    return _serve_logo('logo.svg')
+    return _serve_logo('logo.png')
 
 # -------------------- РЕГИСТРАЦИЯ BLUEPRINTS --------------------
 app.register_blueprint(main_bp)
@@ -180,7 +207,7 @@ def check_rate_limit(tracker, ip, max_reqs, window_sec, burst_limit=None, burst_
     return True, 0
 
 _COMPRESSIBLE_PREFIXES = ('text/', 'application/json', 'application/javascript', 'image/svg+xml')
-_STATIC_CACHE_PREFIXES = ('/static/', '/img/', '/favicon', '/logo.')
+_STATIC_CACHE_PREFIXES = ('/static/', '/img/', '/assets/', '/favicon', '/logo.')
 
 @app.before_request
 def anti_ddos_guard():
