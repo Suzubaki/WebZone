@@ -4,60 +4,14 @@ from functools import lru_cache
 from datetime import datetime, timedelta
 from database import get_db_connection, get_all_settings
 from config import Config
-
-# Классификация диагнозов по системам органов и патологиям (ветеринарный стандарт РБ)
-PATHOLOGY_RULES = [
-    ('Акушерство и гинекология', ['роды', 'моцерац', 'мацерац', 'эндометр', 'кист', 'яловост', 'маточн', 'сальпинг', 'матк', 'гинекол', 'фримартин']),
-    ('Болезни вымени (маститы)', ['мастит', 'агалакти', 'вымен', 'соск']),
-    ('Органы пищеварения', ['тимпани', 'гастро', 'язв', 'сычуг', 'рубец', 'перитонит', 'ретикул', 'атони', 'печен', 'цирроз', 'селезенк', 'преджелудк']),
-    ('Органы дыхания', ['бронхопневмон', 'пневмон', 'легк', 'отек легких', 'дыхан']),
-    ('Болезни молодняка (диспепсия)', ['диспепси', 'гипотрофи', 'колибакт', 'пупочн', 'эшерихиоз']),
-    ('Конечности и травматизм', ['конечност', 'перелом', 'позвоноч', 'хромот', 'копыт', 'сустав', 'травм', 'мягких тканей', 'флегмон', 'рунхольц']),
-    ('Нарушения обмена веществ', ['кетоз', 'ацидоз', 'обмен', 'парез']),
-    ('Сердечно-сосудистая система', ['кровотеч', 'артери', 'сердц', 'инфаркт', 'миокард'])
-]
-
-PATHOLOGY_SYSTEM_NAMES = [r[0] for r in PATHOLOGY_RULES] + ['Прочие заболевания']
-
-NON_COW_AGE_GROUPS = frozenset({
-    'Телята (до 6 мес.)',
-    'Ремонтный молодняк (6–18 мес.)',
-    'Нетели (>18 мес.)',
-    'Бычки на откорме',
-    'Мертворождённые / Аборты'
-})
-
-@lru_cache(maxsize=512)
-def classify_pathology_system(reason):
-    r = (reason or '').lower()
-    for sys_name, keywords in PATHOLOGY_RULES:
-        for k in keywords:
-            if k in r:
-                return sys_name
-    return 'Прочие заболевания'
-
-@lru_cache(maxsize=512)
-def normalize_age_group(raw_group, lactation=None):
-    g = (raw_group or '').lower().strip()
-    if any(k in g for k in ('мертворож', 'аборт', 'плод')):
-        return 'Мертворождённые / Аборты'
-    if any(k in g for k in ('телят', 'до 6', '0-6', '0–6', 'новорожд', 'молочн')):
-        return 'Телята (до 6 мес.)'
-    if any(k in g for k in ('быч', 'бык', 'откорм')):
-        return 'Бычки на откорме'
-    if any(k in g for k in ('нетел', 'старше 18', '> 18', '>18')):
-        return 'Нетели (>18 мес.)'
-    if 'сухосто' in g:
-        return 'Сухостойные коровы'
-    if any(k in g for k in ('новотел', '0-30', '0–30')):
-        return 'Новотельные коровы (0–30 дн DIM)'
-    if lactation == 1 or any(k in g for k in ('первотел', 'первотёл', '1-я лакт', '1-й лакт', '1 лакт')):
-        return 'Коровы 1-й лактации (первотёлки)'
-    if any(k in g for k in ('молодняк', '6-18', '6–18', 'от 6 до 18', '6-12', '6–12', 'ремонтн')) or (('тёлки' in g or 'телки' in g) and 'перво' not in g):
-        return 'Ремонтный молодняк (6–18 мес.)'
-    if (lactation and lactation > 1) or any(k in g for k in ('полновозраст', '2+ лакт')):
-        return 'Полновозрастные коровы (2+ лакт.)'
-    return 'Коровы дойного стада'
+from domain import (
+    PATHOLOGY_RULES,
+    PATHOLOGY_SYSTEM_NAMES,
+    NON_COW_AGE_GROUPS,
+    classify_pathology_system,
+    normalize_age_group,
+    normalize_date,
+)
 
 def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, custom_start=None, custom_end=None):
     """
@@ -130,8 +84,15 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
         end_date = '2099-12-31'
         period_title = "За всё время учёта"
     elif period == 'custom' and custom_start and custom_end:
-        start_date, end_date = (custom_start, custom_end) if custom_start <= custom_end else (custom_end, custom_start)
-        period_title = f"С {start_date} по {end_date}"
+        norm_s = normalize_date(custom_start)
+        norm_e = normalize_date(custom_end)
+        if norm_s and norm_e:
+            start_date, end_date = (norm_s, norm_e) if norm_s <= norm_e else (norm_e, norm_s)
+            period_title = f"С {start_date} по {end_date}"
+        else:
+            start_date = now.replace(day=1).strftime('%Y-%m-%d')
+            end_date = now.strftime('%Y-%m-%d')
+            period_title = "Текущий месяц"
     else:
         start_date = now.replace(day=1).strftime('%Y-%m-%d')
         end_date = now.strftime('%Y-%m-%d')
@@ -154,7 +115,7 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
     try:
         cursor.execute(f'''
             SELECT id, cow_id, ear_tag, farm_name, category, reason, disposal_date, 
-                   lactation, lactation_days, lactation_phase, weight, age_group, milk_yield, book_value,
+                   lactation, lactation_days, lactation_phase, pathology_system, weight, age_group, milk_yield, book_value,
                    is_pregnant, gestation_days, is_stillborn
             FROM cows
             {where_clause}
@@ -167,7 +128,7 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             init_db()
             cursor.execute(f'''
                 SELECT id, cow_id, ear_tag, farm_name, category, reason, disposal_date, 
-                       lactation, lactation_days, lactation_phase, weight, age_group, milk_yield, book_value,
+                       lactation, lactation_days, lactation_phase, pathology_system, weight, age_group, milk_yield, book_value,
                        is_pregnant, gestation_days, is_stillborn
                 FROM cows
                 {where_clause}
@@ -496,7 +457,7 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             if is_death: multi_deaths += 1
 
         # Патологии и топ причин
-        sys_name = classify_pathology_system(reason)
+        sys_name = c['pathology_system'] or classify_pathology_system(reason)
         pathology_systems[sys_name] = pathology_systems.get(sys_name, 0) + 1
         rc_key = (reason, cat)
         reason_counts[rc_key] = reason_counts.get(rc_key, 0) + 1

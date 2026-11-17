@@ -8,7 +8,7 @@ if [ -f /root/.local/bin/pip3 ] && [ ! -f /usr/local/bin/pip3 ]; then
 fi
 
 # Auto-install dependencies if running in a fresh container
-if ! python3 -c "import flask, flask_sqlalchemy, flask_wtf, openpyxl" 2>/dev/null; then
+if ! python3 -c "import flask, flask_wtf, openpyxl" 2>/dev/null; then
     echo "[AI Studio] Installing Python dependencies..."
     if ! command -v pip3 &>/dev/null && ! command -v pip &>/dev/null; then
         if [ -f "get-pip.py" ]; then
@@ -18,9 +18,9 @@ if ! python3 -c "import flask, flask_sqlalchemy, flask_wtf, openpyxl" 2>/dev/nul
         fi
     fi
     if command -v pip3 &>/dev/null; then
-        pip3 install --user Flask Werkzeug openpyxl Flask-SQLAlchemy Flask-Migrate SQLAlchemy Flask-WTF
+        pip3 install --user -r requirements.txt
     elif [ -f /root/.local/bin/pip ]; then
-        /root/.local/bin/pip install --user Flask Werkzeug openpyxl Flask-SQLAlchemy Flask-Migrate SQLAlchemy Flask-WTF
+        /root/.local/bin/pip install --user -r requirements.txt
     fi
 fi
 

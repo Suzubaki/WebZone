@@ -7,9 +7,10 @@ from flask import (
 )
 from config import Config
 from database import get_db_connection, get_setting
+from domain import normalize_date
 from matrix_report import generate_matrix_excel_report
 from report_generator import (
-    generate_csv_report, generate_simple_excel_report, 
+    generate_csv_report, generate_simple_excel_report,
     generate_form_209_apk_excel
 )
 from form_210_apk import generate_form_210_apk_excel
@@ -20,20 +21,13 @@ from .auth import login_required, admin_required
 
 reports_bp = Blueprint('reports', __name__)
 
+
 def _normalize_report_dates(start_raw, end_raw):
     now = datetime.now()
     default_start = now.replace(day=1).strftime('%Y-%m-%d')
     default_end = now.strftime('%Y-%m-%d')
-    start_date = (start_raw or '').strip() or default_start
-    end_date = (end_raw or '').strip() or default_end
-    for val, fallback in ((start_date, default_start), (end_date, default_end)):
-        try:
-            datetime.strptime(val, '%Y-%m-%d')
-        except ValueError:
-            if val == start_date:
-                start_date = fallback
-            else:
-                end_date = fallback
+    start_date = normalize_date(start_raw) or default_start
+    end_date = normalize_date(end_raw) or default_end
     if start_date > end_date:
         start_date, end_date = end_date, start_date
     return start_date, end_date

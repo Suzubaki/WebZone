@@ -1,52 +1,75 @@
 # config.py - Конфигурация приложения
 import os
-
+import secrets
 from datetime import timedelta
 
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+
 # Автоматическая загрузка переменных из .env (если файл существует)
-env_file = os.path.join(os.path.abspath(os.path.dirname(__file__)), '.env')
-if os.path.exists(env_file):
-    with open(env_file, 'r', encoding='utf-8') as f:
+_env_file = os.path.join(BASE_DIR, '.env')
+if os.path.exists(_env_file):
+    with open(_env_file, 'r', encoding='utf-8') as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith('#') and '=' in line:
                 k, v = line.split('=', 1)
                 os.environ.setdefault(k.strip(), v.strip())
 
+
+def _load_or_create_secret_key():
+    """
+    Загружает SECRET_KEY из окружения либо генерирует и сохраняет стойкий
+    криптографический ключ в instance/.secret_key (вне репозитория).
+    """
+    env_key = os.environ.get('SECRET_KEY') or os.environ.get('SESSION_SECRET')
+    if env_key and len(env_key.strip()) >= 16:
+        return env_key.strip()
+
+    instance_dir = os.path.join(BASE_DIR, 'instance')
+    secret_path = os.path.join(instance_dir, '.secret_key')
+    if os.path.exists(secret_path):
+        try:
+            with open(secret_path, 'r', encoding='utf-8') as sf:
+                stored = sf.read().strip()
+                if len(stored) >= 32:
+                    return stored
+        except OSError:
+            pass
+
+    new_key = secrets.token_hex(32)
+    try:
+        os.makedirs(instance_dir, mode=0o700, exist_ok=True)
+        fd = os.open(secret_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as sf:
+            sf.write(new_key)
+    except OSError:
+        # На read-only ФС оставляем сгенерированный в памяти ключ
+        pass
+    return new_key
+
+
 class Config:
-    # Секретный ключ для сессий: используется из окружения либо встроенный безопасный ключ по умолчанию
-    SECRET_KEY = (
-        os.environ.get('SECRET_KEY') 
-        or os.environ.get('SESSION_SECRET') 
-        or 'novaya-pripyat-cattle-management-system-secret-key-2025'
-    )
-    
-    # Безопасные настройки cookies и сессий для PythonAnywhere / Production
-    SESSION_COOKIE_SECURE = False  # Разрешаем сессии как по HTTP, так и по HTTPS без сброса cookie
+    # Криптографический секретный ключ для подписи сессий и CSRF-токенов
+    SECRET_KEY = _load_or_create_secret_key()
+
+    # Настройки cookies и сессий (динамическое включение Secure по HTTPS в app.py)
+    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'False').lower() in ('true', '1', 'yes')
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = 'Lax'
     PERMANENT_SESSION_LIFETIME = timedelta(hours=8)
-    
-    # Настройки CSRF для предотвращения истечения и потери токена
-    WTF_CSRF_TIME_LIMIT = 31536000  # 1 год (исключает ошибку "The CSRF token has expired")
-    WTF_CSRF_SSL_STRICT = False     # Не требовать строгого HTTPS для CSRF токена за прокси
-    
+
+    # Настройки CSRF-защиты (включена по умолчанию; корректно работает за ProxyFix)
+    WTF_CSRF_ENABLED = os.environ.get('WTF_CSRF_ENABLED', 'True').lower() not in ('false', '0', 'no')
+    WTF_CSRF_TIME_LIMIT = 31536000  # 1 год (привязано к сессии)
+    WTF_CSRF_SSL_STRICT = False     # Корректная работа за reverse-proxy с X-Forwarded-Proto
+
     # База данных SQLite
-    BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-    DATABASE = os.path.join(BASE_DIR, 'cattle_disposal.db')
-    
-    # Конфигурация Flask-SQLAlchemy
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or f'sqlite:///{DATABASE}'
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        'connect_args': {
-            'timeout': 10
-        }
-    }
-    
+    BASE_DIR = BASE_DIR
+    DATABASE = os.environ.get('DATABASE_PATH') or os.path.join(BASE_DIR, 'cattle_disposal.db')
+
     # Максимальный размер загружаемого файла (16 MB)
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024
-    
+
     # Организационные и справочные значения по умолчанию
     DEFAULT_ORG_NAME = 'ОАО «Новая Припять»'
     DEFAULT_UNP = '190000000'
@@ -67,7 +90,7 @@ class Config:
         'Сухостойные коровы',
         'Бычки на откорме'
     ]
-    
+
     # Породы скота
     BREEDS = [
         'Черно-пёстрая белорусской селекции',
@@ -80,40 +103,40 @@ class Config:
         'Лимузин',
         'Помесь'
     ]
-    
+
     # Экономические нормативы по умолчанию (в белорусских рублях - BYN)
     DEFAULT_PRICES = {
-        'meat_price_per_kg': 6.20,       # BYN за 1 кг живой массы КРС
-        'milk_price_per_kg': 1.18,       # BYN за 1 кг молока базисной жирности
-        'replacement_cost': 2950.00,     # BYN средняя стоимость нетели / коровы
-        'price_calves': 900.0,           # BYN нормативная стоимость телят (0–6 мес.)
-        'price_youngstock': 1650.0,      # BYN нормативная стоимость ремонтного молодняка (6–18 мес.)
-        'price_heifers': 2700.0,         # BYN нормативная стоимость нетелей
-        'price_cows': 3200.0,            # BYN нормативная стоимость коров дойного стада
-        'price_dry_cows': 3000.0         # BYN нормативная стоимость сухостойных коров
+        'meat_price_per_kg': 6.20,
+        'milk_price_per_kg': 1.18,
+        'replacement_cost': 2950.00,
+        'price_calves': 900.0,
+        'price_youngstock': 1650.0,
+        'price_heifers': 2700.0,
+        'price_cows': 3200.0,
+        'price_dry_cows': 3000.0
     }
 
     # Зоотехнические, аналитические и матричные параметры по умолчанию
     DEFAULT_ANALYTICS_PARAMS = {
-        'sanitary_meat_factor': 0.70,        # Коэффициент сдачи мяса при санприрезке (70% от живого экв.)
-        'standard_lactation_days': 305,      # Стандартная продолжительность лактации (дней)
-        'default_daily_milk_kg': 22.0,       # Средний суточный удой при отсутствии данных о надое (кг)
-        'default_weight_cow': 520.0,         # Средняя живая масса взрослой коровы по умолчанию (кг)
-        'default_weight_youngstock': 320.0,  # Средняя живая масса молодняка по умолчанию (кг)
-        'default_weight_calf': 45.0,         # Средняя живая масса телёнка по умолчанию (кг)
-        'milk_yield_bin_1': 4500.0,          # Граница группы продуктивности: низкая/средняя (кг)
-        'high_yield_threshold_kg': 6500.0,   # Граница высокопродуктивного скота (кг/лакт.)
-        'milk_yield_bin_3': 8500.0,          # Граница рекордного скота (кг/лакт.)
-        'matrix_warn_pct': 15.0,             # Порог внимания ячейки матрицы ферм (%)
-        'matrix_crit_pct': 25.0,             # Критический порог ячейки матрицы ферм (%)
-        'farm_matrix_min_head': 10,          # Мин. голов в МТФ для оценки критического падежа в матрице
-        'alert_window_short_days': 7,        # Окно сравнения вспышки падежа (дней)
-        'alert_window_mid_days': 14,         # Базовое среднее окно сравнения (дней)
-        'alert_window_long_days': 30,        # Окно кластеризации диагнозов и молодняка (дней)
-        'alert_death_min_count': 2,          # Мин. павших голов за 7 дней для тревоги
-        'alert_death_growth_ratio': 1.4,     # Коэффициент роста падежа к норме (x1.4 = +40%)
-        'alert_cluster_min_count': 3,        # Мин. однотипных диагнозов на одной ферме за 30 дней
-        'alert_calf_min_count': 3            # Мин. выбывших телят за 30 дней для предупреждения
+        'sanitary_meat_factor': 0.70,
+        'standard_lactation_days': 305,
+        'default_daily_milk_kg': 22.0,
+        'default_weight_cow': 520.0,
+        'default_weight_youngstock': 320.0,
+        'default_weight_calf': 45.0,
+        'milk_yield_bin_1': 4500.0,
+        'high_yield_threshold_kg': 6500.0,
+        'milk_yield_bin_3': 8500.0,
+        'matrix_warn_pct': 15.0,
+        'matrix_crit_pct': 25.0,
+        'farm_matrix_min_head': 10,
+        'alert_window_short_days': 7,
+        'alert_window_mid_days': 14,
+        'alert_window_long_days': 30,
+        'alert_death_min_count': 2,
+        'alert_death_growth_ratio': 1.4,
+        'alert_cluster_min_count': 3,
+        'alert_calf_min_count': 3
     }
 
     # Светофорные пороги вет-скоркарда (Норма -> Внимание -> Критично)
@@ -263,5 +286,3 @@ class Config:
             if item['match'] in et_low:
                 return item['gestation'], item['weight']
         return cls.DEFAULT_STILLBORN_GESTATION, cls.DEFAULT_STILLBORN_WEIGHT
-
-

@@ -1,11 +1,18 @@
 # database.py - Работа с базой данных SQLite
-import sqlite3
+import logging
 import os
-import shutil
-from datetime import datetime
-from config import Config
-
+import sqlite3
 import threading
+import time
+from config import Config
+from domain import classify_pathology_system, compute_lactation_phase
+
+logger = logging.getLogger('cattle_app')
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s %(name)s: %(message)s'))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
 
 _indexes_checked = False
 _wal_checked_for_db = None
@@ -13,33 +20,56 @@ _settings_cache = {}
 _settings_cache_db = None
 _settings_lock = threading.Lock()
 
+
 def invalidate_settings_cache():
     global _settings_cache, _settings_cache_db
     with _settings_lock:
         _settings_cache = {}
         _settings_cache_db = None
 
+
+def _create_indexes(cursor):
+    """Единое определение оптимальных индексов без избыточного дублирования."""
+    # Основные индексы таблицы cows (включая ожидаемые check_system.py)
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_farm_date ON cows (farm_name, disposal_date);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_category ON cows (category);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_cow_id ON cows (cow_id);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_ear_tag ON cows (ear_tag);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_disposal_date ON cows (disposal_date);')
+    # Составные и аналитические индексы
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_date_id ON cows (disposal_date DESC, id DESC);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_date_cat_farm ON cows (disposal_date, category, farm_name);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_pathology_system ON cows (pathology_system);')
+    # Индексы журнала аудита, причин и мертворождений
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created ON audit_logs (action, created_at DESC);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_disposal_reasons_cat_active ON disposal_reasons (category, is_active, name);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_stillbirth_farm_date ON stillbirth_records (farm_name, event_date);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_stillbirth_event_type ON stillbirth_records (event_type);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_stillbirth_mother_tag ON stillbirth_records (mother_tag);')
+
+
+def _drop_redundant_indexes(cursor):
+    """Удаление избыточных старых индексов, дублирующих префиксы составных индексов."""
+    redundant = (
+        'idx_cows_farm_name',
+        'idx_cows_reason',
+        'idx_cows_cat_reason_farm',
+        'idx_cows_farm_date_id',
+        'idx_cows_category_date_id',
+    )
+    for idx_name in redundant:
+        cursor.execute(f'DROP INDEX IF EXISTS {idx_name};')
+
+
 def _ensure_indexes(conn):
     try:
         cursor = conn.cursor()
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_farm_date ON cows (farm_name, disposal_date);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_category ON cows (category);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_cow_id ON cows (cow_id);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_ear_tag ON cows (ear_tag);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_disposal_date ON cows (disposal_date);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_date_cat_farm ON cows (disposal_date, category, farm_name);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_cat_reason_farm ON cows (category, reason, farm_name);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_date_id ON cows (disposal_date DESC, id DESC);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_farm_date_id ON cows (farm_name, disposal_date DESC, id DESC);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_category_date_id ON cows (category, disposal_date DESC, id DESC);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_farm_name ON cows (farm_name);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cows_reason ON cows (reason);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created ON audit_logs (action, created_at DESC);')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_disposal_reasons_cat_active ON disposal_reasons (category, is_active, name);')
+        _create_indexes(cursor)
         cursor.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Не удалось проверить индексы при открытии соединения: %s", exc)
+
 
 def _sqlite_lower(val):
     if val is None:
@@ -48,11 +78,12 @@ def _sqlite_lower(val):
         return val.lower()
     return str(val).lower()
 
+
 def get_db_connection():
-    """Создает оптимизированное соединение с базой данных SQLite с поддержкой WAL-режима"""
+    """Создает оптимизированное соединение с базой данных SQLite с поддержкой WAL-режима."""
     global _indexes_checked, _wal_checked_for_db
     conn = sqlite3.connect(Config.DATABASE, timeout=10.0)
-    conn.row_factory = sqlite3.Row  # Позволяет обращаться к колонкам по имени
+    conn.row_factory = sqlite3.Row
     conn.create_function("LOWER", 1, _sqlite_lower)
 
     cursor = conn.cursor()
@@ -72,112 +103,48 @@ def get_db_connection():
 
     return conn
 
+
 def optimize_database_indexes():
-    """
-    Создание B-Tree индексов для ускорения поиска, фильтрации и группировки в таблице cows.
-    Устраняет Full Table Scan в аналитических отчетах, матрицах и дашборде.
-    """
+    """Создание/обновление B-Tree индексов и удаление избыточных дубликатов."""
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-
-        # 1. Составной индекс (farm_name, disposal_date) - основной индекс для фильтрации по ферме за период
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_farm_date 
-            ON cows (farm_name, disposal_date);
-        ''')
-
-        # 2. Индекс по категории (падёж, выбраковка, санитарный) - для группировок в статистике и диаграммах
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_category 
-            ON cows (category);
-        ''')
-
-        # 3. Индекс по системному идентификатору (cow_id) - для быстрого поиска карточки животного
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_cow_id 
-            ON cows (cow_id);
-        ''')
-
-        # 4. Индекс по государственному идентификационному номеру AITS (ear_tag)
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_ear_tag 
-            ON cows (ear_tag);
-        ''')
-
-        # 5. Индекс по дате выбытия - для общих временных срезов и годовых отчетов
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_disposal_date 
-            ON cows (disposal_date);
-        ''')
-
-        # 6. Составной индекс для отчётов и актов (disposal_date, category, farm_name)
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_date_cat_farm 
-            ON cows (disposal_date, category, farm_name);
-        ''')
-
-        # 7. Составной индекс для матричных отчетов (category, reason, farm_name)
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_cat_reason_farm 
-            ON cows (category, reason, farm_name);
-        ''')
-
-        # 8. Индекс для мгновенной сортировки по дате и id (пагинация журнала)
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_date_id 
-            ON cows (disposal_date DESC, id DESC);
-        ''')
-
-        # 9. Составной индекс для фильтра по ферме и сортировки
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_farm_date_id 
-            ON cows (farm_name, disposal_date DESC, id DESC);
-        ''')
-
-        # 10. Составной индекс для фильтра по категории и сортировки
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_category_date_id 
-            ON cows (category, disposal_date DESC, id DESC);
-        ''')
-
-        # 11. Индекс по названию фермы
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_farm_name 
-            ON cows (farm_name);
-        ''')
-
-        # 12. Индекс по причине выбытия
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_cows_reason 
-            ON cows (reason);
-        ''')
-
+        _drop_redundant_indexes(cursor)
+        _create_indexes(cursor)
         conn.commit()
-        conn.close()
     except Exception as e:
-        print(f"Ошибка при создании индексов базы данных: {e}")
+        logger.warning("Ошибка при оптимизации индексов базы данных: %s", e)
+    finally:
+        if conn is not None:
+            conn.close()
+
 
 def sync_farm_data():
     """
-    Синхронизация названий ферм в таблицах cows и stillbirth_records с актуальными названиями ферм пользователей (по created_by)
+    Синхронизация названий ферм в таблицах cows и stillbirth_records
+    с актуальными названиями ферм пользователей (строго по created_by).
     """
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE cows
             SET farm_name = (
-                SELECT u.farm_name 
-                FROM users u 
-                WHERE u.id = cows.created_by 
-                  AND u.farm_name IS NOT NULL 
+                SELECT u.farm_name
+                FROM users u
+                WHERE u.id = cows.created_by
+                  AND u.farm_name IS NOT NULL
                   AND u.farm_name != ''
             )
             WHERE created_by IN (
-                SELECT id FROM users 
-                WHERE farm_name IS NOT NULL 
+                SELECT id FROM users
+                WHERE farm_name IS NOT NULL
                   AND farm_name != ''
+            )
+            AND COALESCE(farm_name, '') != (
+                SELECT u.farm_name FROM users u WHERE u.id = cows.created_by
             )
         ''')
         cursor.execute('''
@@ -194,52 +161,87 @@ def sync_farm_data():
                 WHERE farm_name IS NOT NULL
                   AND farm_name != ''
             )
+            AND COALESCE(farm_name, '') != (
+                SELECT u.farm_name FROM users u WHERE u.id = stillbirth_records.created_by
+            )
         ''')
         conn.commit()
-        conn.close()
     except Exception as e:
-        print(f"Ошибка синхронизации названий ферм: {e}")
+        logger.warning("Ошибка синхронизации названий ферм: %s", e)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _backfill_normalized_columns(cursor):
+    """Заполняет pathology_system и нормализует lactation_phase для существующих записей."""
+    cursor.execute('''
+        SELECT id, reason, age_group, lactation_days, lactation, lactation_phase, pathology_system
+        FROM cows
+        WHERE pathology_system IS NULL OR pathology_system = ''
+           OR lactation_phase IS NULL OR lactation_phase = ''
+    ''')
+    rows = cursor.fetchall()
+    if not rows:
+        return
+    updates = []
+    for r in rows:
+        ps = r['pathology_system'] or classify_pathology_system(r['reason'])
+        lp = r['lactation_phase'] or compute_lactation_phase(r['age_group'], r['lactation_days'], r['lactation'])
+        updates.append((ps, lp, r['id']))
+    cursor.executemany(
+        'UPDATE cows SET pathology_system = ?, lactation_phase = ? WHERE id = ?',
+        updates
+    )
+
 
 def init_db():
-    """Инициализация базы данных и создание/миграция таблиц"""
+    """Инициализация базы данных и создание/миграция таблиц."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     # 1. Таблица пользователей
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            user_type TEXT NOT NULL,  -- 'admin' или 'farm'
-            farm_name TEXT,           -- Название фермы для пользователей типа 'farm'
+            user_type TEXT NOT NULL,
+            farm_name TEXT,
+            must_change_password INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
+    cursor.execute("PRAGMA table_info(users)")
+    user_cols = {row['name'] for row in cursor.fetchall()}
+    if 'must_change_password' not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0")
+
     # 2. Таблица коров (учет выбытия)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS cows (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            cow_id TEXT NOT NULL,        -- Системный номер выбытия ('Farm1-001')
-            ear_tag TEXT,               -- Инвентарный / ушной номер AITS (РБ)
-            farm_name TEXT NOT NULL,     -- Название фермы / МТФ
-            category TEXT NOT NULL,      -- 'падёж', 'выбраковка', 'санитарный'
-            reason TEXT NOT NULL,        -- Причина выбытия (диагноз)
-            disposal_date DATE NOT NULL, -- Дата выбытия
-            lactation INTEGER,          -- Номер лактации / возраст
-            weight REAL,                -- Живая масса (кг)
-            notes TEXT,                 -- Примечание / заключение ветеринара
-            age_group TEXT,             -- Половозрастная группа скота (ПВГ)
-            lactation_days INTEGER,     -- Дни лактации (DIM - Days in Milk)
-            lactation_phase TEXT,       -- Фаза лактации (Новотел, Раздой, Середина, Спад, Сухостой, Молодняк)
-            breed TEXT,                 -- Порода
-            milk_yield REAL,            -- Надой за последнюю лактацию (кг)
-            book_value REAL,            -- Балансовая / первоначальная стоимость (BYN)
-            is_pregnant INTEGER DEFAULT 0, -- Стельность на момент выбытия (1: стельная, 0: нестельная)
-            gestation_days INTEGER DEFAULT 0, -- Срок стельности (дней/месяцев)
+            cow_id TEXT NOT NULL,
+            ear_tag TEXT,
+            farm_name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            disposal_date DATE NOT NULL,
+            lactation INTEGER,
+            weight REAL,
+            notes TEXT,
+            age_group TEXT,
+            lactation_days INTEGER,
+            lactation_phase TEXT,
+            pathology_system TEXT,
+            breed TEXT,
+            milk_yield REAL,
+            book_value REAL,
+            is_pregnant INTEGER DEFAULT 0,
+            gestation_days INTEGER DEFAULT 0,
+            is_stillborn INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            created_by INTEGER,          -- ID пользователя, добавившего запись
+            created_by INTEGER,
             updated_at TIMESTAMP,
             updated_by INTEGER,
             FOREIGN KEY (created_by) REFERENCES users (id),
@@ -247,32 +249,42 @@ def init_db():
         )
     ''')
 
-    # Миграция колонок для стельности и мертворождений
-    try:
-        cursor.execute("ALTER TABLE cows ADD COLUMN is_pregnant INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE cows ADD COLUMN gestation_days INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    try:
-        cursor.execute("ALTER TABLE cows ADD COLUMN is_stillborn INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    
+    cursor.execute("PRAGMA table_info(cows)")
+    existing_cols = {row['name'] for row in cursor.fetchall()}
+    columns_to_add = {
+        'ear_tag': 'TEXT',
+        'lactation': 'INTEGER',
+        'weight': 'REAL',
+        'notes': 'TEXT',
+        'age_group': 'TEXT',
+        'lactation_days': 'INTEGER',
+        'lactation_phase': 'TEXT',
+        'pathology_system': 'TEXT',
+        'breed': 'TEXT',
+        'milk_yield': 'REAL',
+        'book_value': 'REAL',
+        'is_pregnant': 'INTEGER DEFAULT 0',
+        'gestation_days': 'INTEGER DEFAULT 0',
+        'is_stillborn': 'INTEGER DEFAULT 0',
+        'updated_at': 'TIMESTAMP',
+        'updated_by': 'INTEGER'
+    }
+    for col_name, col_type in columns_to_add.items():
+        if col_name not in existing_cols:
+            cursor.execute(f"ALTER TABLE cows ADD COLUMN {col_name} {col_type}")
+
     # 3. Динамический справочник причин выбытия
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS disposal_reasons (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category TEXT NOT NULL,     -- 'падёж', 'выбраковка', 'санитарный'
-            name TEXT NOT NULL,         -- Название причины
-            is_active INTEGER DEFAULT 1, -- 1: активна, 0: скрыта
+            category TEXT NOT NULL,
+            name TEXT NOT NULL,
+            is_active INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(category, name)
         )
     ''')
-    
+
     # 4. Журнал аудита действий (Audit Log)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS audit_logs (
@@ -280,15 +292,15 @@ def init_db():
             user_id INTEGER,
             username TEXT NOT NULL,
             farm_name TEXT,
-            action TEXT NOT NULL,       -- 'CREATE', 'UPDATE', 'DELETE', 'IMPORT', 'BACKUP'
-            entity_type TEXT NOT NULL,  -- 'COW', 'USER', 'REASON', 'SETTINGS'
+            action TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
             entity_id TEXT,
             details TEXT,
             ip_address TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
+
     # 5. Системные настройки (включая экономические расценки)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS system_settings (
@@ -298,23 +310,23 @@ def init_db():
         )
     ''')
 
-    # 6. Журнал учёта мертворождений и абортов (Акушерско-гинекологический журнал)
+    # 6. Журнал учёта мертворождений и абортов
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS stillbirth_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            record_code TEXT NOT NULL,           -- e.g. 'МТК Цегельня-М001'
+            record_code TEXT NOT NULL,
             farm_name TEXT NOT NULL,
             event_date DATE NOT NULL,
-            mother_tag TEXT,                    -- Инвент./AITS номер матери (мать жива!)
-            mother_group TEXT,                  -- 'Коровы 1-й лактации (первотёлки)', 'Полновозрастные коровы (2+ лакт.)', 'Нетели (>18 мес.)', 'Сухостойные коровы'
-            event_type TEXT NOT NULL,           -- Тип события (Мертворождённый телёнок в срок / Аборт / др.)
-            fetus_sex TEXT,                     -- Пол плода (Тёлочка / Бычок / Двойня / Не определён)
-            fetus_weight REAL,                  -- Вес плода (кг)
-            gestation_days INTEGER DEFAULT 0,   -- Срок стельности на момент отёла/аборта (дней)
-            cause TEXT NOT NULL,                -- Причина гибели плода
-            mother_condition TEXT,              -- Состояние матери после отёла
-            attendant TEXT,                     -- Принял отёл (ветврач / техник)
-            notes TEXT,                         -- Заключение / примечания
+            mother_tag TEXT,
+            mother_group TEXT,
+            event_type TEXT NOT NULL,
+            fetus_sex TEXT,
+            fetus_weight REAL,
+            gestation_days INTEGER DEFAULT 0,
+            cause TEXT NOT NULL,
+            mother_condition TEXT,
+            attendant TEXT,
+            notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_by INTEGER,
             updated_at TIMESTAMP,
@@ -323,11 +335,8 @@ def init_db():
             FOREIGN KEY (updated_by) REFERENCES users (id)
         )
     ''')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_stillbirth_farm_date ON stillbirth_records (farm_name, event_date);')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_stillbirth_event_type ON stillbirth_records (event_type);')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_stillbirth_mother_tag ON stillbirth_records (mother_tag);')
 
-    # 6. Таблица счётчиков для атомарной генерации номеров без race conditions
+    # 7. Таблица счётчиков для атомарной генерации номеров
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS farm_counters (
             farm_name TEXT PRIMARY KEY,
@@ -336,16 +345,15 @@ def init_db():
         )
     ''')
 
-    # Миграция существующих мертворождений из таблицы cows в stillbirth_records
+    # Однократная миграция legacy-мертворождений из таблицы cows
     try:
         cursor.execute('''
             SELECT id, cow_id, ear_tag, farm_name, category, reason, disposal_date, weight, notes, age_group, gestation_days, created_at, created_by
             FROM cows
-            WHERE is_stillborn = 1 
-               OR category = 'мертворождение' 
-               OR LOWER(age_group) LIKE '%мертворож%' 
-               OR LOWER(age_group) LIKE '%аборт%' 
-               OR LOWER(reason) LIKE '%мертворож%'
+            WHERE is_stillborn = 1
+               OR category = 'мертворождение'
+               OR LOWER(age_group) LIKE '%мертворож%'
+               OR LOWER(age_group) LIKE '%аборт%'
         ''')
         rows_to_migrate = cursor.fetchall()
         for r in rows_to_migrate:
@@ -353,48 +361,43 @@ def init_db():
             if '-М' not in c_code:
                 parts = c_code.split('-')
                 c_code = f"{parts[0]}-М{parts[-1]}" if len(parts) > 1 else f"{c_code}-М"
-            
-            cursor.execute('SELECT id FROM stillbirth_records WHERE record_code = ? OR (farm_name = ? AND event_date = ? AND cause = ?)', 
-                           (c_code, r['farm_name'], r['disposal_date'], r['reason']))
+
+            cursor.execute(
+                'SELECT id FROM stillbirth_records WHERE record_code = ? OR (farm_name = ? AND event_date = ? AND cause = ?)',
+                (c_code, r['farm_name'], r['disposal_date'], r['reason'])
+            )
             if not cursor.fetchone():
-                e_type = 'Аборт (1-й триместр, до 90 дн.)' if 'аборт' in (r['reason'] or '').lower() or 'аборт' in (r['age_group'] or '').lower() else 'Мертворождённый телёнок (в срок)'
-                m_group = 'Сухостойные коровы' if 'сухосто' in (r['age_group'] or '').lower() else Config.DEFAULT_STILLBORN_MOTHER_GROUP
+                e_type = (
+                    'Аборт (1-й триместр, до 90 дн.)'
+                    if 'аборт' in (r['reason'] or '').lower() or 'аборт' in (r['age_group'] or '').lower()
+                    else 'Мертворождённый телёнок (в срок)'
+                )
+                m_group = (
+                    'Сухостойные коровы'
+                    if 'сухосто' in (r['age_group'] or '').lower()
+                    else Config.DEFAULT_STILLBORN_MOTHER_GROUP
+                )
                 cursor.execute('''
-                    INSERT INTO stillbirth_records 
+                    INSERT INTO stillbirth_records
                     (record_code, farm_name, event_date, mother_tag, mother_group, event_type, fetus_sex, fetus_weight, gestation_days, cause, mother_condition, attendant, notes, created_at, created_by)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (c_code, r['farm_name'], r['disposal_date'], r['ear_tag'], m_group, e_type, 'Не определён', r['weight'] or Config.DEFAULT_STILLBORN_WEIGHT, r['gestation_days'] or 0, r['reason'], 'Здорова, оставлена в стаде', Config.DEFAULT_ATTENDANT, r['notes'] or 'Автоматически перенесено из общего журнала выбытия', r['created_at'], r['created_by']))
-        
+                ''', (
+                    c_code, r['farm_name'], r['disposal_date'], r['ear_tag'], m_group,
+                    e_type, 'Не определён', r['weight'] or Config.DEFAULT_STILLBORN_WEIGHT,
+                    r['gestation_days'] or 0, r['reason'], 'Здорова, оставлена в стаде',
+                    Config.DEFAULT_ATTENDANT, r['notes'] or 'Автоматически перенесено из общего журнала выбытия',
+                    r['created_at'], r['created_by']
+                ))
+
         if rows_to_migrate:
             migrated_ids = [r['id'] for r in rows_to_migrate]
             placeholders = ','.join('?' for _ in migrated_ids)
             cursor.execute(f"DELETE FROM cows WHERE id IN ({placeholders})", migrated_ids)
     except Exception as e:
-        print(f"Ошибка миграции мертворождений: {e}")
+        logger.warning("Ошибка миграции мертворождений: %s", e)
 
-    
-    # Миграция: проверка и добавление недостающих колонок в cows
-    cursor.execute("PRAGMA table_info(cows)")
-    existing_cols = [row['name'] for row in cursor.fetchall()]
-    columns_to_add = {
-        'ear_tag': 'TEXT',
-        'lactation': 'INTEGER',
-        'weight': 'REAL',
-        'notes': 'TEXT',
-        'age_group': 'TEXT',
-        'lactation_days': 'INTEGER',
-        'lactation_phase': 'TEXT',
-        'breed': 'TEXT',
-        'milk_yield': 'REAL',
-        'book_value': 'REAL',
-        'updated_at': 'TIMESTAMP',
-        'updated_by': 'INTEGER'
-    }
-    for col_name, col_type in columns_to_add.items():
-        if col_name not in existing_cols:
-            cursor.execute(f"ALTER TABLE cows ADD COLUMN {col_name} {col_type}")
-    
-    # Удалены дублирующие CREATE INDEX (индексы централизованы в _ensure_indexes / optimize_database_indexes)
+    # Заполнение нормализованных колонок для существующих записей
+    _backfill_normalized_columns(cursor)
 
     # Заполнение справочника причин по умолчанию, если он пуст
     cursor.execute("SELECT COUNT(*) as cnt FROM disposal_reasons")
@@ -405,7 +408,7 @@ def init_db():
                     INSERT OR IGNORE INTO disposal_reasons (category, name, is_active)
                     VALUES (?, ?, 1)
                 ''', (cat, reason))
-                
+
     # Заполнение настроек по умолчанию, если отсутствуют
     p = Config.DEFAULT_PRICES
     sc = Config.DEFAULT_SCORECARD_THRESHOLDS
@@ -453,18 +456,16 @@ def init_db():
             INSERT OR IGNORE INTO system_settings (key, value, description)
             VALUES (?, ?, ?)
         ''', (k, v, d))
-        
+
     conn.commit()
     conn.close()
-    
-    # Вызов синхронизации названий ферм
-    sync_farm_data()
 
-    # Создание и оптимизация индексов
+    sync_farm_data()
     optimize_database_indexes()
 
+
 def get_all_settings():
-    """Получение всех настроек в виде словаря (с кэшированием в памяти процесса)"""
+    """Получение всех настроек в виде словаря (с кэшированием в памяти процесса)."""
     global _settings_cache, _settings_cache_db
     with _settings_lock:
         if _settings_cache and _settings_cache_db == Config.DATABASE:
@@ -482,13 +483,13 @@ def get_all_settings():
         _settings_cache_db = Config.DATABASE
         return dict(_settings_cache)
 
+
 def get_setting(key, default=None):
-    """Получение значения настройки из БД (через быстрый кэш настроек)"""
     settings = get_all_settings()
     return settings.get(key, default)
 
+
 def set_setting(key, value, description=None):
-    """Сохранение или обновление настройки в БД"""
     conn = get_db_connection()
     cursor = conn.cursor()
     if description:
@@ -505,75 +506,103 @@ def set_setting(key, value, description=None):
     conn.close()
     invalidate_settings_cache()
 
+
 def log_audit_event(username, farm_name, action, entity_type, entity_id=None, details=None, user_id=None, ip_address=None):
-    """Запись события в журнал аудита"""
+    """Запись события в журнал аудита с надёжным логированием сбоев."""
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO audit_logs (user_id, username, farm_name, action, entity_type, entity_id, details, ip_address)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (user_id, username, farm_name, action, entity_type, str(entity_id) if entity_id else None, details, ip_address))
+        ''', (user_id, username or 'System', farm_name, action, entity_type, str(entity_id) if entity_id else None, details, ip_address))
         conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Ошибка логирования аудита: {e}")
-
-def generate_cow_id(farm_name):
-    """
-    Атомарно генерирует следующий уникальный номер выбытия для фермы в формате 'FarmName-XXX'
-    через таблицу счетчиков farm_counters с транзакционной блокировкой (BEGIN IMMEDIATE).
-    Гарантирует уникальность и последовательность номеров без race conditions.
-    """
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("BEGIN IMMEDIATE")
-        
-        # Получаем текущее значение счетчика для фермы
-        cursor.execute("SELECT last_cow_number FROM farm_counters WHERE farm_name = ?", (farm_name,))
-        row = cursor.fetchone()
-        
-        if row is None:
-            # Инициализируем из существующей таблицы cows, если счетчик еще не создан
-            cursor.execute('''
-                SELECT cow_id FROM cows 
-                WHERE farm_name = ? 
-                ORDER BY id DESC LIMIT 1
-            ''', (farm_name,))
-            last_cow = cursor.fetchone()
-            current_max = 0
-            if last_cow and last_cow['cow_id']:
-                try:
-                    parts = last_cow['cow_id'].split('-')
-                    current_max = int(parts[-1])
-                except (IndexError, ValueError):
-                    current_max = 0
-            
-            new_number = current_max + 1
-            cursor.execute('''
-                INSERT INTO farm_counters (farm_name, last_cow_number, last_stillborn_number)
-                VALUES (?, ?, 0)
-            ''', (farm_name, new_number))
-        else:
-            new_number = row['last_cow_number'] + 1
-            cursor.execute('''
-                UPDATE farm_counters 
-                SET last_cow_number = ? 
-                WHERE farm_name = ?
-            ''', (new_number, farm_name))
-            
-        conn.commit()
-        return f"{farm_name}-{new_number:03d}"
     except Exception:
-        conn.rollback()
-        import time
-        return f"{farm_name}-{int(time.time() * 1000) % 100000:03d}"
+        logger.exception("Ошибка записи события аудита action=%s entity=%s", action, entity_type)
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
+
+
+def _max_suffix_from_rows(rows, col_name, separator):
+    max_num = 0
+    for r in rows:
+        code = r[col_name]
+        if not code:
+            continue
+        try:
+            tail = str(code).split(separator)[-1].replace('М', '')
+            num = int(tail)
+            if num > max_num:
+                max_num = num
+        except (IndexError, ValueError):
+            continue
+    return max_num
+
+
+def _next_counter_value(cursor, farm_name, counter_col, table_name, code_col, prefix_sep):
+    cursor.execute(f"SELECT {counter_col} FROM farm_counters WHERE farm_name = ?", (farm_name,))
+    row = cursor.fetchone()
+    if row is None:
+        cursor.execute(f"SELECT {code_col} FROM {table_name} WHERE farm_name = ?", (farm_name,))
+        current_max = _max_suffix_from_rows(cursor.fetchall(), code_col, '-')
+        new_number = current_max + 1
+        if counter_col == 'last_cow_number':
+            cursor.execute(
+                'INSERT INTO farm_counters (farm_name, last_cow_number, last_stillborn_number) VALUES (?, ?, 0)',
+                (farm_name, new_number)
+            )
+        else:
+            cursor.execute(
+                'INSERT INTO farm_counters (farm_name, last_cow_number, last_stillborn_number) VALUES (?, 0, ?)',
+                (farm_name, new_number)
+            )
+    else:
+        new_number = (row[counter_col] or 0) + 1
+        cursor.execute(
+            f'UPDATE farm_counters SET {counter_col} = ? WHERE farm_name = ?',
+            (new_number, farm_name)
+        )
+    return new_number
+
+
+def generate_cow_id(farm_name, conn=None):
+    """
+    Атомарно генерирует следующий уникальный номер выбытия 'FarmName-XXX'
+    с повторами при временной блокировке SQLite (без коллизионного timestamp fallback).
+    """
+    if conn is not None:
+        cursor = conn.cursor()
+        new_number = _next_counter_value(cursor, farm_name, 'last_cow_number', 'cows', 'cow_id', '-')
+        return f"{farm_name}-{new_number:03d}"
+
+    last_err = None
+    for attempt in range(5):
+        local_conn = get_db_connection()
+        try:
+            cursor = local_conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            new_number = _next_counter_value(cursor, farm_name, 'last_cow_number', 'cows', 'cow_id', '-')
+            local_conn.commit()
+            return f"{farm_name}-{new_number:03d}"
+        except sqlite3.OperationalError as exc:
+            local_conn.rollback()
+            last_err = exc
+            time.sleep(0.02 * (attempt + 1))
+        except Exception as exc:
+            local_conn.rollback()
+            logger.exception("Критическая ошибка генерации cow_id для фермы %s", farm_name)
+            raise RuntimeError(f"Не удалось сгенерировать уникальный номер выбытия: {exc}") from exc
+        finally:
+            local_conn.close()
+
+    logger.error("Превышено число попыток генерации cow_id для %s: %s", farm_name, last_err)
+    raise RuntimeError(f"База данных занята при генерации номера выбытия: {last_err}")
+
 
 def get_reasons_for_category(category, include_inactive=False):
-    """Получение причин выбытия из базы данных"""
+    """Получение причин выбытия из базы данных."""
     conn = get_db_connection()
     cursor = conn.cursor()
     if include_inactive:
@@ -582,63 +611,41 @@ def get_reasons_for_category(category, include_inactive=False):
         cursor.execute('SELECT name FROM disposal_reasons WHERE category = ? AND is_active = 1 ORDER BY name ASC', (category,))
     results = cursor.fetchall()
     conn.close()
-    
+
     if include_inactive:
         return [dict(r) for r in results]
-    else:
-        return [r['name'] for r in results]
+    return [r['name'] for r in results]
 
-def generate_stillborn_code(farm_name):
+
+def generate_stillborn_code(farm_name, conn=None):
     """
-    Атомарно генерирует следующий номер акта мертворождения для фермы в формате 'FarmName-МXXX'
-    через таблицу farm_counters с транзакционной блокировкой (BEGIN IMMEDIATE).
+    Атомарно генерирует следующий уникальный номер акта мертворождения 'FarmName-МXXX'
+    с повторами при блокировке SQLite (без коллизионного timestamp fallback).
     """
-    conn = get_db_connection()
-    try:
+    if conn is not None:
         cursor = conn.cursor()
-        cursor.execute("BEGIN IMMEDIATE")
-        
-        cursor.execute("SELECT last_stillborn_number FROM farm_counters WHERE farm_name = ?", (farm_name,))
-        row = cursor.fetchone()
-        
-        if row is None:
-            cursor.execute('''
-                SELECT record_code FROM stillbirth_records 
-                WHERE farm_name = ? 
-                ORDER BY id DESC LIMIT 1
-            ''', (farm_name,))
-            last_row = cursor.fetchone()
-            current_max = 0
-            if last_row and last_row['record_code']:
-                try:
-                    if '-М' in last_row['record_code']:
-                        parts = last_row['record_code'].split('-М')
-                        current_max = int(parts[-1])
-                    else:
-                        parts = last_row['record_code'].split('-')
-                        current_max = int(parts[-1].replace('М', ''))
-                except (IndexError, ValueError):
-                    current_max = 0
-            
-            new_number = current_max + 1
-            cursor.execute('''
-                INSERT INTO farm_counters (farm_name, last_cow_number, last_stillborn_number)
-                VALUES (?, 0, ?)
-            ''', (farm_name, new_number))
-        else:
-            new_number = row['last_stillborn_number'] + 1
-            cursor.execute('''
-                UPDATE farm_counters 
-                SET last_stillborn_number = ? 
-                WHERE farm_name = ?
-            ''', (new_number, farm_name))
-            
-        conn.commit()
+        new_number = _next_counter_value(cursor, farm_name, 'last_stillborn_number', 'stillbirth_records', 'record_code', '-')
         return f"{farm_name}-М{new_number:03d}"
-    except Exception:
-        conn.rollback()
-        import time
-        return f"{farm_name}-М{int(time.time() * 1000) % 100000:03d}"
-    finally:
-        conn.close()
 
+    last_err = None
+    for attempt in range(5):
+        local_conn = get_db_connection()
+        try:
+            cursor = local_conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            new_number = _next_counter_value(cursor, farm_name, 'last_stillborn_number', 'stillbirth_records', 'record_code', '-')
+            local_conn.commit()
+            return f"{farm_name}-М{new_number:03d}"
+        except sqlite3.OperationalError as exc:
+            local_conn.rollback()
+            last_err = exc
+            time.sleep(0.02 * (attempt + 1))
+        except Exception as exc:
+            local_conn.rollback()
+            logger.exception("Критическая ошибка генерации кода мертворождения для фермы %s", farm_name)
+            raise RuntimeError(f"Не удалось сгенерировать номер акта мертворождения: {exc}") from exc
+        finally:
+            local_conn.close()
+
+    logger.error("Превышено число попыток генерации кода мертворождения для %s: %s", farm_name, last_err)
+    raise RuntimeError(f"База данных занята при генерации номера акта: {last_err}")

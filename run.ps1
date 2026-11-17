@@ -14,9 +14,7 @@ pip install -r requirements.txt --quiet
 
 Write-Host "[3/3] Запуск приложения Flask..." -ForegroundColor Green
 Write-Host "Откройте браузер по ссылке: http://127.0.0.1:3000" -ForegroundColor Cyan
-Write-Host "Учётные записи по умолчанию:" -ForegroundColor White
-Write-Host "  - Администратор: admin / admin123" -ForegroundColor Gray
-Write-Host "  - Ферма 1:       farm1 / farm123" -ForegroundColor Gray
+Write-Host "При пустой БД временный пароль admin будет показан в консоли и сохранён в instance/initial_credentials.txt" -ForegroundColor White
 Write-Host "========================================================" -ForegroundColor Green
 
 python app.py

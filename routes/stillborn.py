@@ -1,16 +1,18 @@
 # routes/stillborn.py - Специализированный журнал учёта мертворождений и абортов (РБ)
 import os
 import io
-from datetime import datetime
+from datetime import date, datetime
 from flask import (
-    Blueprint, render_template, request, redirect, 
+    Blueprint, render_template, request, redirect,
     url_for, flash, session, jsonify, send_file
 )
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 from config import Config
-from database import get_db_connection, generate_stillborn_code, log_audit_event, get_setting
+from database import get_db_connection, log_audit_event, get_setting
+from domain import normalize_date, validate_stillborn_payload
+from cow_queries import insert_stillborn_record
 from .auth import login_required
 
 stillborn_bp = Blueprint('stillborn', __name__)
@@ -128,43 +130,17 @@ def add_stillborn():
         return redirect(url_for('stillborn.stillborn_list'))
         
     farm_name = session.get('farm_name')
-    today = datetime.now().strftime('%Y-%m-%d')
-    
+    today_dt = date.today()
+    today = today_dt.strftime('%Y-%m-%d')
+
     if request.method == 'POST':
-        event_date = (request.form.get('event_date') or '').strip()
-        mother_tag = request.form.get('mother_tag', '').strip() or None
-        mother_group = request.form.get('mother_group') or Config.DEFAULT_STILLBORN_MOTHER_GROUP
-        event_type = request.form.get('event_type') or Config.STILLBIRTH_EVENT_TYPES[0]
-        fetus_sex = request.form.get('fetus_sex') or 'Не определён'
-        cause = request.form.get('cause', '').strip()
-        custom_cause = request.form.get('custom_cause', '').strip()
-        if custom_cause and (cause == 'Другое' or not cause):
-            cause = custom_cause
-            
-        mother_condition = request.form.get('mother_condition') or Config.MOTHER_CONDITIONS[0]
-        attendant = request.form.get('attendant', '').strip() or Config.DEFAULT_ATTENDANT
-        notes = request.form.get('notes', '').strip() or None
-        
-        def_gest, def_w = Config.infer_stillborn_defaults(event_type)
-        try:
-            fetus_weight = float(request.form.get('fetus_weight')) if request.form.get('fetus_weight') else def_w
-        except (ValueError, TypeError):
-            fetus_weight = def_w
-            
-        try:
-            gestation_days = int(request.form.get('gestation_days')) if request.form.get('gestation_days') else def_gest
-        except (ValueError, TypeError):
-            gestation_days = def_gest
+        cleaned, errors = validate_stillborn_payload(request.form, today_date=today_dt)
+        draft_record = dict(cleaned)
+        if not draft_record.get('event_date'):
+            draft_record['event_date'] = (request.form.get('event_date') or '').strip()
 
-        draft_record = {
-            'event_date': event_date, 'mother_tag': mother_tag, 'mother_group': mother_group,
-            'event_type': event_type, 'fetus_sex': fetus_sex, 'fetus_weight': fetus_weight,
-            'gestation_days': gestation_days, 'cause': cause, 'mother_condition': mother_condition,
-            'attendant': attendant, 'notes': notes
-        }
-            
-        if not event_date or not cause or not event_type:
-            flash('Пожалуйста, заполните дату, тип события и причину гибели плода.', 'danger')
+        if errors:
+            flash(' '.join(errors), 'danger')
             return render_template('stillborn_form.html',
                                    action='add',
                                    record=draft_record,
@@ -177,46 +153,25 @@ def add_stillborn():
                                    mother_conditions=Config.MOTHER_CONDITIONS,
                                    mother_groups=Config.MOTHER_GROUPS)
 
-        if event_date > today:
-            flash('Дата события не может быть позже сегодняшнего дня.', 'danger')
-            return render_template('stillborn_form.html',
-                                   action='add',
-                                   record=draft_record,
-                                   farm_name=farm_name,
-                                   today=today,
-                                   stillborn_prefill=Config.STILLBORN_PREFILL_MAP,
-                                   event_types=Config.STILLBIRTH_EVENT_TYPES,
-                                   causes=Config.STILLBIRTH_CAUSES,
-                                   fetus_sexes=Config.FETUS_SEXES,
-                                   mother_conditions=Config.MOTHER_CONDITIONS,
-                                   mother_groups=Config.MOTHER_GROUPS)
-                                   
-        record_code = generate_stillborn_code(farm_name)
-        
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO stillbirth_records 
-            (record_code, farm_name, event_date, mother_tag, mother_group, event_type, 
-             fetus_sex, fetus_weight, gestation_days, cause, mother_condition, attendant, notes, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (record_code, farm_name, event_date, mother_tag, mother_group, event_type,
-              fetus_sex, fetus_weight, gestation_days, cause, mother_condition, attendant, notes, session.get('user_id')))
-        new_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        
+        try:
+            cursor = conn.cursor()
+            new_id, record_code = insert_stillborn_record(cursor, farm_name, session.get('user_id'), cleaned)
+            conn.commit()
+        finally:
+            conn.close()
+
         log_audit_event(
             username=session.get('username'),
             farm_name=farm_name,
             action='CREATE',
             entity_type='STILLBIRTH',
             entity_id=new_id,
-            details=f"Зарегистрировано {event_type} № {record_code} (Мать: {mother_tag or 'нет'}), причина: {cause}",
+            details=f"Зарегистрировано {cleaned['event_type']} № {record_code} (Мать: {cleaned['mother_tag'] or 'нет'}), причина: {cleaned['cause']}",
             user_id=session.get('user_id'),
             ip_address=request.remote_addr
         )
-        
+
         flash(f'Акт мертворождения успешно зарегистрирован под номером {record_code}', 'success')
         return redirect(url_for('stillborn.stillborn_list'))
         
@@ -257,40 +212,13 @@ def edit_stillborn(record_id):
     record = dict(record_row)
     
     if request.method == 'POST':
-        event_date = (request.form.get('event_date') or '').strip()
-        mother_tag = request.form.get('mother_tag', '').strip() or None
-        mother_group = request.form.get('mother_group') or Config.DEFAULT_STILLBORN_MOTHER_GROUP
-        event_type = request.form.get('event_type') or Config.STILLBIRTH_EVENT_TYPES[0]
-        fetus_sex = request.form.get('fetus_sex') or 'Не определён'
-        cause = request.form.get('cause', '').strip()
-        custom_cause = request.form.get('custom_cause', '').strip()
-        if custom_cause and (cause == 'Другое' or not cause):
-            cause = custom_cause
-            
-        mother_condition = request.form.get('mother_condition') or Config.MOTHER_CONDITIONS[0]
-        attendant = request.form.get('attendant', '').strip() or Config.DEFAULT_ATTENDANT
-        notes = request.form.get('notes', '').strip() or None
-        
-        def_gest, def_w = Config.infer_stillborn_defaults(event_type)
-        try:
-            fetus_weight = float(request.form.get('fetus_weight')) if request.form.get('fetus_weight') else def_w
-        except (ValueError, TypeError):
-            fetus_weight = def_w
-            
-        try:
-            gestation_days = int(request.form.get('gestation_days')) if request.form.get('gestation_days') else def_gest
-        except (ValueError, TypeError):
-            gestation_days = def_gest
+        cleaned, errors = validate_stillborn_payload(request.form, today_date=date.today())
 
-        if not event_date or not cause or not event_type or event_date > today:
-            flash('Проверьте корректность даты (не позже сегодняшней), типа события и причины гибели плода.', 'danger')
-            record.update({
-                'event_date': event_date or record.get('event_date'),
-                'mother_tag': mother_tag, 'mother_group': mother_group, 'event_type': event_type,
-                'fetus_sex': fetus_sex, 'fetus_weight': fetus_weight, 'gestation_days': gestation_days,
-                'cause': cause or record.get('cause'), 'mother_condition': mother_condition,
-                'attendant': attendant, 'notes': notes
-            })
+        if errors:
+            flash(' '.join(errors), 'danger')
+            record.update(cleaned)
+            if not record.get('event_date'):
+                record['event_date'] = request.form.get('event_date') or record_row['event_date']
             conn.close()
             return render_template('stillborn_form.html',
                                    action='edit',
@@ -303,9 +231,9 @@ def edit_stillborn(record_id):
                                    fetus_sexes=Config.FETUS_SEXES,
                                    mother_conditions=Config.MOTHER_CONDITIONS,
                                    mother_groups=Config.MOTHER_GROUPS)
-            
+
         cursor.execute('''
-            UPDATE stillbirth_records SET 
+            UPDATE stillbirth_records SET
                 event_date = ?,
                 mother_tag = ?,
                 mother_group = ?,
@@ -320,22 +248,26 @@ def edit_stillborn(record_id):
                 updated_at = CURRENT_TIMESTAMP,
                 updated_by = ?
             WHERE id = ?
-        ''', (event_date, mother_tag, mother_group, event_type, fetus_sex, fetus_weight, 
-              gestation_days, cause, mother_condition, attendant, notes, session.get('user_id'), record_id))
+        ''', (
+            cleaned['event_date'], cleaned['mother_tag'], cleaned['mother_group'],
+            cleaned['event_type'], cleaned['fetus_sex'], cleaned['fetus_weight'],
+            cleaned['gestation_days'], cleaned['cause'], cleaned['mother_condition'],
+            cleaned['attendant'], cleaned['notes'], session.get('user_id'), record_id
+        ))
         conn.commit()
         conn.close()
-        
+
         log_audit_event(
             username=session.get('username'),
             farm_name=record['farm_name'],
             action='UPDATE',
             entity_type='STILLBIRTH',
             entity_id=record_id,
-            details=f"Отредактирован акт мертворождения {record['record_code']}. Новая причина: {cause}",
+            details=f"Отредактирован акт мертворождения {record['record_code']}. Новая причина: {cleaned['cause']}",
             user_id=session.get('user_id'),
             ip_address=request.remote_addr
         )
-        
+
         flash(f'Акт {record["record_code"]} успешно сохранён', 'success')
         return redirect(url_for('stillborn.stillborn_list'))
         

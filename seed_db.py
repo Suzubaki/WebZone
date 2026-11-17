@@ -4,19 +4,23 @@ from datetime import datetime, timedelta
 from config import Config
 from auth import register_user
 
+from domain import classify_pathology_system, compute_lactation_phase
+
+
 def seed_sample_cows():
+    import secrets
     from database import get_db_connection, init_db
     init_db()
-    
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # 1. Создаем пользователей
-    register_user('admin', 'admin123', 'admin')
-    register_user('farm1', 'farm123', 'farm', 'МТФ-1 Центральная')
-    register_user('farm2', 'farm123', 'farm', 'МТФ-2 Заречье')
-    register_user('farm3', 'farm123', 'farm', 'МТФ-3 Полесье')
-    
+
+    # 1. Создаём демонстрационные фермы только при их отсутствии (без захардкоженных паролей)
+    cursor.execute("SELECT COUNT(*) as cnt FROM users WHERE user_type = 'farm'")
+    if cursor.fetchone()['cnt'] == 0:
+        for uname, fname in (('farm1', 'МТФ-1 Центральная'), ('farm2', 'МТФ-2 Заречье'), ('farm3', 'МТФ-3 Полесье')):
+            register_user(uname, secrets.token_urlsafe(12), 'farm', fname, must_change_password=True)
+
     # Проверяем, есть ли уже записи в таблице cows
     cursor.execute("SELECT COUNT(*) as cnt FROM cows WHERE COALESCE(is_stillborn, 0) = 0")
     count = cursor.fetchone()['cnt']
@@ -101,12 +105,14 @@ def seed_sample_cows():
             
         user_id = farm_users.get(farm, 1)
             
+        lact_phase = compute_lactation_phase(ag, None, lact)
+        p_sys = classify_pathology_system(reason)
         cursor.execute('''
             INSERT INTO cows (cow_id, ear_tag, farm_name, category, reason, disposal_date, 
-                              lactation, weight, notes, age_group, breed, milk_yield, book_value, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              lactation, lactation_phase, pathology_system, weight, notes, age_group, breed, milk_yield, book_value, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (cow_num, tag, farm, cat, reason, disposal_d, 
-              lact, w, f"Выбытие скота ({cat})", ag, breed, milk, bv, user_id))
+              lact, lact_phase, p_sys, w, f"Выбытие скота ({cat})", ag, breed, milk, bv, user_id))
               
     conn.commit()
     conn.close()

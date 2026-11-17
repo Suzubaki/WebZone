@@ -1,15 +1,19 @@
 # app.py - Главная точка входа и фабрика приложения Flask
 import gzip
+import logging
 import os
 import time
 from datetime import datetime
-from flask import Flask, session, send_file, send_from_directory, Response, url_for, request, jsonify
+from flask import Flask, session, send_file, send_from_directory, Response, url_for, request, jsonify, redirect, flash
+from flask.sessions import SecureCookieSessionInterface
+from flask_wtf.csrf import CSRFError
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config
 from database import init_db, get_all_settings
 from auth import get_user_by_id
+from extensions import csrf
 
-# Импорт Blueprint'ов новой модульной архитектуры
 from routes import (
     main_bp,
     auth_bp,
@@ -20,84 +24,44 @@ from routes import (
     stillborn_bp
 )
 
+logger = logging.getLogger('cattle_app')
+
+class DynamicCookieSessionInterface(SecureCookieSessionInterface):
+    """Динамически включает Secure (и SameSite=None для HTTPS iframe) при наличии HTTPS."""
+
+    def get_cookie_secure(self, flask_app):
+        if flask_app.config.get('SESSION_COOKIE_SECURE'):
+            return True
+        return bool(request.is_secure)
+
+    def get_cookie_samesite(self, flask_app):
+        if request.is_secure and request.headers.get('Sec-Fetch-Site') == 'cross-site':
+            return 'None'
+        return super().get_cookie_samesite(flask_app)
+
+
 app = Flask(__name__)
 app.config.from_object(Config)
+app.session_interface = DynamicCookieSessionInterface()
 
-# Подключение ProxyFix для корректной работы за reverse proxy на PythonAnywhere
-from werkzeug.middleware.proxy_fix import ProxyFix
+# Корректная обработка X-Forwarded-* заголовков за reverse proxy (PythonAnywhere / Nginx)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# Настройки и инициализация CSRF-защиты (Flask-WTF) - отключена для стабильности сессий за прокси PythonAnywhere
-app.config['WTF_CSRF_ENABLED'] = False
-from flask_wtf.csrf import CSRFProtect
-csrf = CSRFProtect(app)
+# Включаем CSRF-защиту Flask-WTF (управляется Config.WTF_CSRF_ENABLED = True)
+csrf.init_app(app)
 
-# Инициализация Flask-SQLAlchemy и Flask-Migrate
-try:
-    from extensions import db, migrate
-    db.init_app(app)
-    migrate.init_app(app, db)
-except ImportError:
-    db = None
-    migrate = None
-
-# Автоматическая инициализация структуры и миграций БД (необходимо для WSGI / PythonAnywhere)
+# Автоматическая инициализация структуры и миграций БД
 try:
     with app.app_context():
         init_db()
         from create_users import create_default_users
         create_default_users()
 except Exception as _init_err:
-    print(f"Предупреждение при инициализации базы данных: {_init_err}")
+    logger.warning("Предупреждение при инициализации базы данных: %s", _init_err)
 
-# Векторный логотип ОАО «Новая Припять» (Официальный золотой колос)
-LOGO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="100%" height="100%">
-  <defs>
-    <linearGradient id="wheatGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#fbbf24" />
-      <stop offset="45%" stop-color="#f59e0b" />
-      <stop offset="100%" stop-color="#d97706" />
-    </linearGradient>
-    <linearGradient id="wheatGrad2" x1="100%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#fde047" />
-      <stop offset="50%" stop-color="#eab308" />
-      <stop offset="100%" stop-color="#b45309" />
-    </linearGradient>
-    <linearGradient id="wheatTip" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#f59e0b" />
-      <stop offset="100%" stop-color="#f97316" />
-    </linearGradient>
-    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" flood-color="#b45309" flood-opacity="0.25" />
-    </filter>
-  </defs>
-  <rect width="240" height="240" fill="#ffffff" rx="16" />
-  <g id="wheat-ear" filter="url(#softShadow)">
-    <path d="M42 120 C38 106, 52 92, 60 90 C66 94, 62 108, 48 122 Z" fill="url(#wheatGrad1)" />
-    <path d="M44 118 Q54 100 60 92" stroke="#fef08a" stroke-width="1" fill="none" opacity="0.6" />
-    <path d="M52 122 C56 112, 70 106, 78 108 C80 116, 68 126, 54 124 Z" fill="url(#wheatGrad2)" />
-    <path d="M60 92 C62 80, 80 72, 90 72 C94 78, 88 92, 74 102 Z" fill="url(#wheatGrad1)" />
-    <path d="M64 90 Q80 76 89 74" stroke="#fef08a" stroke-width="1.2" fill="none" opacity="0.6" />
-    <path d="M76 104 C82 94, 98 90, 106 94 C108 102, 94 114, 80 110 Z" fill="url(#wheatGrad2)" />
-    <path d="M90 73 C96 66, 116 64, 126 68 C128 76, 116 88, 102 92 Z" fill="url(#wheatGrad1)" />
-    <path d="M96 72 Q114 66 124 70" stroke="#fef08a" stroke-width="1.2" fill="none" opacity="0.6" />
-    <path d="M104 94 C112 86, 130 84, 138 90 C138 98, 124 106, 110 102 Z" fill="url(#wheatGrad2)" />
-    <path d="M124 70 C134 68, 152 72, 160 80 C158 88, 142 94, 130 90 Z" fill="url(#wheatGrad1)" />
-    <path d="M128 72 Q146 72 157 80" stroke="#fef08a" stroke-width="1.2" fill="none" opacity="0.6" />
-    <path d="M136 90 C146 86, 160 88, 168 96 C164 104, 150 106, 138 98 Z" fill="url(#wheatGrad2)" />
-    <path d="M156 82 C166 82, 180 88, 186 96 C182 102, 168 104, 158 96 Z" fill="url(#wheatGrad1)" />
-    <path d="M168 96 C176 96, 192 100, 196 106 C190 110, 178 110, 170 102 Z" fill="url(#wheatTip)" />
-    <path d="M184 92 C196 90, 206 91, 210 93" stroke="#eab308" stroke-width="1.5" stroke-linecap="round" fill="none" />
-    <path d="M190 98 C202 96, 212 97, 216 100" stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round" fill="none" />
-    <path d="M194 104 C204 102, 214 105, 218 108" stroke="#d97706" stroke-width="1.6" stroke-linecap="round" fill="none" />
-    <path d="M188 108 C198 108, 208 112, 212 116" stroke="#b45309" stroke-width="1.3" stroke-linecap="round" fill="none" />
-    <path d="M174 104 C184 106, 196 112, 202 118" stroke="#d97706" stroke-width="1.2" stroke-linecap="round" fill="none" />
-  </g>
-  <text x="120" y="148" font-family="'Trebuchet MS', 'Segoe UI', Arial, sans-serif" font-size="25.5" font-weight="900" font-style="italic" fill="#212529" text-anchor="middle" letter-spacing="-0.3">Новая Припять</text>
-  <text x="120" y="166" font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="8.2" font-weight="700" fill="#262a2e" text-anchor="middle" letter-spacing="1.2">ОТКРЫТОЕ АКЦИОНЕРНОЕ ОБЩЕСТВО</text>
-</svg>"""
-
+_FALLBACK_LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#1b5e20"/><text x="32" y="39" font-family="sans-serif" font-size="22" font-weight="bold" fill="#ffd54f" text-anchor="middle">НП</text></svg>'
 NEW_LOGO_REL = os.path.join('public', 'assets', 'aistudio', '__________________________________f05f89ea.png')
+
 
 def _get_new_logo_path():
     candidates = [
@@ -109,6 +73,7 @@ def _get_new_logo_path():
         if os.path.exists(c) and os.path.isfile(c):
             return c
     return None
+
 
 def _serve_logo(filename):
     if filename.startswith('logo.'):
@@ -125,18 +90,20 @@ def _serve_logo(filename):
         if os.path.exists(candidate) and os.path.isfile(candidate):
             mimetype = 'image/jpeg' if filename.endswith(('.jpg', '.jpeg')) else ('image/png' if filename.endswith('.png') else 'image/svg+xml')
             return send_file(candidate, mimetype=mimetype)
-    return Response(LOGO_SVG, mimetype='image/svg+xml')
+    return Response(_FALLBACK_LOGO_SVG, mimetype='image/svg+xml')
 
-# Регистрация маршрутов раздачи статических ассетов
+
 @app.route('/assets/<path:filename>')
 def serve_public_assets(filename):
     assets_dir = os.path.join(app.root_path, 'public', 'assets')
     return send_from_directory(assets_dir, filename)
 
+
 @app.route('/img/<path:filename>')
 @app.route('/static/img/<path:filename>')
 def serve_img(filename):
     return _serve_logo(filename)
+
 
 @app.route('/favicon.ico')
 @app.route('/favicon.png')
@@ -145,7 +112,8 @@ def serve_favicon():
     new_logo = _get_new_logo_path()
     if new_logo:
         return send_file(new_logo, mimetype='image/png')
-    return Response(LOGO_SVG, mimetype='image/svg+xml')
+    return Response(_FALLBACK_LOGO_SVG, mimetype='image/svg+xml')
+
 
 @app.route('/logo.jpg')
 @app.route('/logo.svg')
@@ -155,6 +123,7 @@ def serve_favicon():
 @app.route('/img/logo.png')
 def serve_logo_direct():
     return _serve_logo('logo.png')
+
 
 # -------------------- РЕГИСТРАЦИЯ BLUEPRINTS --------------------
 app.register_blueprint(main_bp)
@@ -168,27 +137,37 @@ app.register_blueprint(stillborn_bp)
 
 # -------------------- ЗАЩИТА ОТ DDOS И ПЕРЕГРУЗКИ СЕРВЕРА --------------------
 _ip_requests = {}
-_auth_requests = {}
-_heavy_requests = {}
 _blocked_ips = {}
+_MAX_IP_ENTRIES = 1000
+
 
 def get_client_ip():
-    cf = request.headers.get('CF-Connecting-IP')
-    if cf and cf.strip():
-        return cf.strip()
-    fwd = request.headers.get('X-Forwarded-For')
-    if fwd and fwd.strip():
-        return fwd.split(',')[0].strip()
+    """IP клиента определяется через ProxyFix (без доверия к подделываемым заголовкам)."""
     return request.remote_addr or '127.0.0.1'
+
+
+def _prune_rate_limit_tables(now):
+    if len(_blocked_ips) > 200:
+        expired_blocks = [ip for ip, until in _blocked_ips.items() if until <= now]
+        for ip in expired_blocks:
+            _blocked_ips.pop(ip, None)
+
+    if len(_ip_requests) > _MAX_IP_ENTRIES:
+        cutoff = now - 60
+        stale_ips = [k for k, ts_list in _ip_requests.items() if not ts_list or ts_list[-1] < cutoff]
+        for k in stale_ips:
+            _ip_requests.pop(k, None)
+
 
 def check_rate_limit(tracker, ip, max_reqs, window_sec, burst_limit=None, burst_window=5, block_sec=60):
     now = time.time()
-    if ip in _blocked_ips:
-        unblock_time = _blocked_ips[ip]
+    _prune_rate_limit_tables(now)
+
+    unblock_time = _blocked_ips.get(ip)
+    if unblock_time:
         if unblock_time > now:
-            return False, int(unblock_time - now)
-        else:
-            del _blocked_ips[ip]
+            return False, max(1, int(unblock_time - now))
+        _blocked_ips.pop(ip, None)
 
     timestamps = [t for t in tracker.get(ip, []) if now - t < window_sec]
     tracker[ip] = timestamps
@@ -206,40 +185,65 @@ def check_rate_limit(tracker, ip, max_reqs, window_sec, burst_limit=None, burst_
     tracker[ip].append(now)
     return True, 0
 
+
 _COMPRESSIBLE_PREFIXES = ('text/', 'application/json', 'application/javascript', 'image/svg+xml')
 _STATIC_CACHE_PREFIXES = ('/static/', '/img/', '/assets/', '/favicon', '/logo.')
+_PASSWORD_CHANGE_ALLOWED_ENDPOINTS = (
+    'auth.change_password',
+    'auth.logout',
+    'static',
+    'serve_public_assets',
+    'serve_img',
+    'serve_favicon',
+    'serve_logo_direct',
+)
+
 
 @app.before_request
 def anti_ddos_guard():
-    # Пропускаем статические файлы и безопасные GET-запросы
     if request.method not in ('POST', 'PUT', 'DELETE') or request.path.startswith(_STATIC_CACHE_PREFIXES):
         return None
-        
+    if app.config.get('TESTING'):
+        return None
+
     client_ip = get_client_ip()
-    
-    # Исключение для локального тестирования и мониторинга
     if client_ip in ('127.0.0.1', '::1') and not os.environ.get('ENABLE_LOCAL_RATELIMIT'):
         return None
 
-    # Периодическая очистка устаревших IP-записей, чтобы словарь не рос бесконечно
-    if len(_ip_requests) > 500:
-        cutoff = time.time() - 60
-        stale_ips = [k for k, ts_list in _ip_requests.items() if not ts_list or ts_list[-1] < cutoff]
-        for k in stale_ips:
-            del _ip_requests[k]
-
-    # Ограничение для изменяющих POST-запросов: до 60 запросов в минуту на IP
     allowed, wait_sec = check_rate_limit(_ip_requests, client_ip, max_reqs=60, window_sec=60, burst_limit=20, burst_window=5, block_sec=30)
     if not allowed:
         return Response(f"429 Too Many Requests: Превышен лимит запросов. Подождите {wait_sec} сек.", status=429, mimetype="text/plain; charset=utf-8")
-        
+
     return None
+
+
+@app.before_request
+def sync_current_user_session():
+    if request.path.startswith(_STATIC_CACHE_PREFIXES):
+        return None
+    if 'user_id' in session:
+        now = time.time()
+        last_sync = session.get('_user_sync_ts', 0)
+        if now - last_sync >= 60:
+            user = get_user_by_id(session['user_id'])
+            if user is None:
+                session.clear()
+                return redirect(url_for('auth.login'))
+            session['farm_name'] = user.farm_name
+            session['username'] = user.username
+            session['user_type'] = user.user_type
+            session['must_change_password'] = bool(user.must_change_password)
+            session['_user_sync_ts'] = now
+
+        if session.get('must_change_password') and request.endpoint not in _PASSWORD_CHANGE_ALLOWED_ENDPOINTS:
+            flash('Необходимо сменить временный пароль перед дальнейшей работой.', 'warning')
+            return redirect(url_for('auth.change_password'))
+
 
 @app.after_request
 def add_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
     if 'Server' in response.headers:
@@ -248,7 +252,6 @@ def add_security_headers(response):
     if request.path.startswith(_STATIC_CACHE_PREFIXES) and response.status_code == 200:
         response.headers['Cache-Control'] = 'public, max-age=86400'
 
-    # Gzip-сжатие HTML/JSON/SVG ответов >= 1 КБ при поддержке браузером
     accept_encoding = request.headers.get('Accept-Encoding', '')
     mimetype = (response.mimetype or '').lower()
     if (
@@ -270,36 +273,45 @@ def add_security_headers(response):
 
     return response
 
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    reason = getattr(e, 'description', 'Недействительный или просроченный CSRF-токен.')
+    is_ajax = (
+        request.is_json
+        or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+        or 'application/json' in request.headers.get('Accept', '')
+    )
+    if is_ajax:
+        return jsonify({
+            'status': 'error',
+            'error': 'csrf_error',
+            'message': f'Ошибка безопасности (CSRF): {reason}. Обновите страницу и повторите попытку.'
+        }), 400
+    return Response(
+        f"<!DOCTYPE html><html lang='ru'><head><meta charset='utf-8'><title>Ошибка CSRF</title></head>"
+        f"<body style='font-family:sans-serif;max-width:540px;margin:60px auto;padding:20px;'>"
+        f"<h3>Сессия формы устарела</h3>"
+        f"<p>Ошибка проверки безопасности (CSRF): {reason}</p>"
+        f"<p><a href='{request.path}'>Обновить страницу</a> и повторить отправку.</p></body></html>",
+        status=400,
+        mimetype='text/html; charset=utf-8'
+    )
+
+
 @app.errorhandler(429)
 def ratelimit_error(e):
     return Response("429 Too Many Requests: Превышен лимит запросов. Пожалуйста, подождите перед повторной попыткой.", status=429, mimetype="text/plain; charset=utf-8")
+
 
 @app.errorhandler(413)
 def payload_too_large(e):
     return Response("413 Request Entity Too Large: Размер отправленного запроса превышает допустимый лимит безопасности.", status=413, mimetype="text/plain; charset=utf-8")
 
-# Синхронизация данных пользователя в сессии (с троттлингом 60 сек и пропуском статики)
-@app.before_request
-def sync_current_user_session():
-    if request.path.startswith(_STATIC_CACHE_PREFIXES):
-        return None
-    if 'user_id' in session:
-        now = time.time()
-        last_sync = session.get('_user_sync_ts', 0)
-        if now - last_sync < 60:
-            return None
-        user = get_user_by_id(session['user_id'])
-        if user:
-            session['farm_name'] = user.farm_name
-            session['username'] = user.username
-            session['user_type'] = user.user_type
-            session['_user_sync_ts'] = now
 
-# Обратная совместимость и безопасность вызовов url_for в шаблонах
 @app.context_processor
 def override_url_for():
     def has_endpoint(endpoint_name):
-        """Безопасная проверка существования зарегистрированного маршрута в Flask без TypeError"""
         if not endpoint_name:
             return False
         try:
@@ -308,12 +320,12 @@ def override_url_for():
             return False
 
     def safe_url_for(endpoint_name, default='#', **values):
-        """Безопасное вычисление URL с поддержкой алиасов и резервным вариантом"""
         aliases = {
             'index': 'main.index',
             'dashboard': 'main.dashboard',
             'login': 'auth.login',
             'logout': 'auth.logout',
+            'change_password': 'auth.change_password',
             'register': 'auth.register',
             'user_management': 'auth.user_management',
             'edit_user': 'auth.edit_user',
@@ -380,6 +392,7 @@ def override_url_for():
         current_year=datetime.now().year
     )
 
+
 if __name__ == '__main__':
     init_db()
     from create_users import create_default_users
@@ -387,4 +400,3 @@ if __name__ == '__main__':
     port = int(os.environ.get('APP_PORT', 3000))
     is_debug = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1')
     app.run(host='0.0.0.0', port=port, debug=is_debug, threaded=True)
-

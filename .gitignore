@@ -52,3 +52,10 @@ node_modules/
 
 # Конфигурационные файлы (кроме config.py)
 config_*.py
+
+# Секреты и runtime-данные
+instance/
+.secret_key
+*.bak
+*.pre_restore_bak
+*.restore_temp

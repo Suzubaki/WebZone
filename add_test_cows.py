@@ -5,27 +5,7 @@ import sqlite3
 from datetime import datetime, timedelta
 
 
-def _compute_phase(age_group, lactation_days):
-    grp = (age_group or '').lower()
-    if 'телят' in grp:
-        return 'Молодняк (до 6 мес.)'
-    if 'быч' in grp or 'откорм' in grp:
-        return 'Бычки на откорме'
-    if 'молодняк' in grp or 'ремонтн' in grp:
-        return 'Молодняк (6–18 мес.)'
-    if 'нетел' in grp:
-        return 'Нетели'
-    if 'сухосто' in grp:
-        return 'Сухостой'
-    if lactation_days is not None:
-        if lactation_days <= 30:
-            return 'Новотел (0–30 дн)'
-        if lactation_days <= 100:
-            return 'Раздой (31–100 дн)'
-        if lactation_days <= 200:
-            return 'Середина (101–200 дн)'
-        return 'Спад (201–305+ дн)'
-    return 'Фаза не указана'
+from domain import classify_pathology_system, compute_lactation_phase
 
 
 def generate_test_cows(count=1000, stillborn_count=None, reset=False):
@@ -272,7 +252,8 @@ def generate_test_cows(count=1000, stillborn_count=None, reset=False):
         if forced_dim_rng is not None:
             dim = rng.randint(forced_dim_rng[0], forced_dim_rng[1])
 
-        lact_phase = _compute_phase(ag, dim)
+        lact_phase = compute_lactation_phase(ag, dim, lact)
+        p_sys = classify_pathology_system(reason)
         ear_tag = f"BY 04 {rng.randint(100000, 999999)}"
         breed = rng.choices(
             [Config.DEFAULT_BREED, 'Голштинская', 'Черно-пёстрая', 'Красная белорусская', 'Симментальская'],
@@ -283,16 +264,16 @@ def generate_test_cows(count=1000, stillborn_count=None, reset=False):
 
         cow_rows.append((
             cow_id, ear_tag, farm, cat, reason, disposal_d,
-            lact, dim, lact_phase, weight, notes, ag, breed, milk_yield, book_value,
+            lact, dim, lact_phase, p_sys, weight, notes, ag, breed, milk_yield, book_value,
             is_pregnant, gestation_days, 0, user_id
         ))
 
     cursor.executemany('''
         INSERT INTO cows (
             cow_id, ear_tag, farm_name, category, reason, disposal_date,
-            lactation, lactation_days, lactation_phase, weight, notes, age_group, breed, milk_yield, book_value,
+            lactation, lactation_days, lactation_phase, pathology_system, weight, notes, age_group, breed, milk_yield, book_value,
             is_pregnant, gestation_days, is_stillborn, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', cow_rows)
 
     # Генерация записей мертворождений и абортов
