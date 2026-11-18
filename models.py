@@ -75,7 +75,6 @@ class Cow:
     pathology_system: Optional[str] = None
     breed: Optional[str] = None
     milk_yield: Optional[float] = None
-    book_value: Optional[float] = None
     is_pregnant: int = 0
     gestation_days: int = 0
     is_stillborn: int = 0

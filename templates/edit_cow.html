@@ -54,7 +54,7 @@
                             </select>
                         </div>
                         
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <label for="breed" class="form-label fw-semibold">Порода</label>
                             <select class="form-select" id="breed" name="breed">
                                 {% set cur_breed = cow.breed or '' %}
@@ -67,12 +67,12 @@
                             </select>
                         </div>
 
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <label for="lactation" class="form-label fw-semibold">Номер лактации</label>
                             <input type="number" class="form-control" id="lactation" name="lactation" min="0" max="20" value="{{ cow.lactation if cow.lactation is not none else '' }}">
                         </div>
 
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <label for="lactation_days" class="form-label fw-semibold text-primary">
                                 <i class="bi bi-clock-history"></i> Дни лактации (DIM)
                             </label>
@@ -86,19 +86,14 @@
                             </div>
                         </div>
                         
-                        <div class="col-md-3">
+                        <div class="col-md-6">
                             <label for="weight" class="form-label fw-semibold">Живая масса (кг)</label>
                             <input type="number" step="0.1" class="form-control" id="weight" name="weight" min="0" value="{{ cow.weight or '' }}">
                         </div>
 
-                        <div class="col-md-3">
+                        <div class="col-md-6">
                             <label for="milk_yield" class="form-label fw-semibold">Удой за посл. лактацию (кг)</label>
                             <input type="number" step="1" class="form-control" id="milk_yield" name="milk_yield" min="0" value="{{ cow.milk_yield or '' }}" placeholder="кг">
-                        </div>
-
-                        <div class="col-md-4">
-                            <label for="book_value" class="form-label fw-semibold">Балансовая стоим. (BYN)</label>
-                            <input type="number" step="0.01" class="form-control" id="book_value" name="book_value" min="0" value="{{ cow.book_value or '' }}" placeholder="руб.">
                         </div>
 
                         <!-- Выбытие стельной коровы -->

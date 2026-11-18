@@ -104,26 +104,8 @@ class Config:
         'Помесь'
     ]
 
-    # Экономические нормативы по умолчанию (в белорусских рублях - BYN)
-    DEFAULT_PRICES = {
-        'meat_price_per_kg': 6.20,
-        'milk_price_per_kg': 1.18,
-        'replacement_cost': 2950.00,
-        'price_calves': 900.0,
-        'price_youngstock': 1650.0,
-        'price_heifers': 2700.0,
-        'price_cows': 3200.0,
-        'price_dry_cows': 3000.0
-    }
-
     # Зоотехнические, аналитические и матричные параметры по умолчанию
     DEFAULT_ANALYTICS_PARAMS = {
-        'sanitary_meat_factor': 0.70,
-        'standard_lactation_days': 305,
-        'default_daily_milk_kg': 22.0,
-        'default_weight_cow': 520.0,
-        'default_weight_youngstock': 320.0,
-        'default_weight_calf': 45.0,
         'milk_yield_bin_1': 4500.0,
         'high_yield_threshold_kg': 6500.0,
         'milk_yield_bin_3': 8500.0,

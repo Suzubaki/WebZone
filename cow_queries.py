@@ -219,15 +219,15 @@ def insert_cow_record(cursor, farm_name, user_id, cleaned):
         INSERT INTO cows (
             cow_id, ear_tag, farm_name, category, reason, disposal_date,
             lactation, lactation_days, lactation_phase, pathology_system,
-            weight, notes, age_group, breed, milk_yield, book_value,
+            weight, notes, age_group, breed, milk_yield,
             is_pregnant, gestation_days, is_stillborn, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
     ''', (
         cow_id, cleaned.get('ear_tag'), farm_name, cleaned['category'], cleaned['reason'],
         cleaned['disposal_date'], cleaned.get('lactation'), cleaned.get('lactation_days'),
         lact_phase, p_sys, cleaned.get('weight'), cleaned.get('notes'),
         cleaned.get('age_group'), cleaned.get('breed'), cleaned.get('milk_yield'),
-        cleaned.get('book_value'), cleaned.get('is_pregnant', 0),
+        cleaned.get('is_pregnant', 0),
         cleaned.get('gestation_days', 0), user_id
     ))
     return cursor.lastrowid, cow_id

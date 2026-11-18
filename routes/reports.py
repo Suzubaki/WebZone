@@ -75,10 +75,9 @@ def generate_report():
             conn.close()
             
             total_weight = sum(float(c['weight'] or 0) for c in cows_list)
-            total_value = sum(float(c['book_value'] or 0) for c in cows_list)
             org_name = get_setting('farm_org_name', Config.DEFAULT_ORG_NAME)
-            return render_template('form_210_preview.html', cows=cows_list, total_weight=f"{total_weight:.1f}", 
-                                   total_value=f"{total_value:.2f}", start_date=start_date, end_date=end_date, 
+            return render_template('form_210_preview.html', cows=cows_list, total_weight=f"{total_weight:.1f}",
+                                   start_date=start_date, end_date=end_date,
                                    farm_filter=farm_filter, org_name=org_name,
                                    default_breed=Config.DEFAULT_BREED)
         else:

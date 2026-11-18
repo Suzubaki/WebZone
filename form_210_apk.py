@@ -25,7 +25,7 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
         
     cursor.execute(f'''
         SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, 
-               lactation, weight, notes, age_group, breed, milk_yield, book_value 
+               lactation, weight, notes, age_group, breed, milk_yield 
         FROM cows 
         {where_clause}
         ORDER BY disposal_date ASC
@@ -56,15 +56,15 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
     header_fill = PatternFill(start_color="DCE7F5", end_color="DCE7F5", fill_type="solid")
     
     # Правый верхний угол: гриф формы
-    ws.merge_cells('H1:K1')
-    ws['H1'] = "Типовая форма 210-АПК"
-    ws['H1'].font = Font(name='Arial', size=9, bold=True)
-    ws['H1'].alignment = Alignment(horizontal='right', vertical='center')
+    ws.merge_cells('G1:J1')
+    ws['G1'] = "Типовая форма 210-АПК"
+    ws['G1'].font = Font(name='Arial', size=9, bold=True)
+    ws['G1'].alignment = Alignment(horizontal='right', vertical='center')
     
-    ws.merge_cells('G2:K2')
-    ws['G2'] = "Утверждена постановлением Минсельхозпрода Республики Беларусь"
-    ws['G2'].font = small_font
-    ws['G2'].alignment = Alignment(horizontal='right', vertical='center')
+    ws.merge_cells('F2:J2')
+    ws['F2'] = "Утверждена постановлением Минсельхозпрода Республики Беларусь"
+    ws['F2'].font = small_font
+    ws['F2'].alignment = Alignment(horizontal='right', vertical='center')
     
     # Левый верхний угол: реквизиты
     ws['A4'] = f"Сельхозорганизация: {org_name}"
@@ -73,27 +73,27 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
     ws['A5'].font = Font(name='Arial', size=9, bold=True)
     
     # Гриф УТВЕРЖДАЮ
-    ws.merge_cells('H4:K4')
-    ws['H4'] = "УТВЕРЖДАЮ"
-    ws['H4'].font = Font(name='Arial', size=10, bold=True)
-    ws['H4'].alignment = Alignment(horizontal='center', vertical='center')
+    ws.merge_cells('G4:J4')
+    ws['G4'] = "УТВЕРЖДАЮ"
+    ws['G4'].font = Font(name='Arial', size=10, bold=True)
+    ws['G4'].alignment = Alignment(horizontal='center', vertical='center')
     
-    ws.merge_cells('H5:K5')
-    ws['H5'] = "Руководитель организации (Директор): ________________"
-    ws['H5'].font = body_font
-    ws['H5'].alignment = Alignment(horizontal='center', vertical='center')
+    ws.merge_cells('G5:J5')
+    ws['G5'] = "Руководитель организации (Директор): ________________"
+    ws['G5'].font = body_font
+    ws['G5'].alignment = Alignment(horizontal='center', vertical='center')
     
-    ws.merge_cells('A7:K7')
+    ws.merge_cells('A7:J7')
     ws['A7'] = "АКТ НА ВЫБРАКОВКУ ЖИВОТНЫХ ИЗ ОСНОВНОГО СТАДА"
     ws['A7'].font = title_font
     ws['A7'].alignment = Alignment(horizontal='center', vertical='center')
     
-    ws.merge_cells('A8:K8')
+    ws.merge_cells('A8:J8')
     ws['A8'] = f"за период с {start_date} по {end_date} года"
     ws['A8'].font = body_font
     ws['A8'].alignment = Alignment(horizontal='center', vertical='center')
     
-    # Табличная часть (11 колонок)
+    # Табличная часть (10 колонок)
     headers = [
         ('№ п/п', 5),
         ('Идент. № AITS / Инв. №', 18),
@@ -102,10 +102,9 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
         ('Лактация / Возраст', 14),
         ('Живая масса (кг)', 13),
         ('Удой за посл. лактацию (кг)', 16),
-        ('Балансовая стоим. (BYN)', 15),
-        ('Причина выбраковки (диагноз)', 24),
+        ('Причина выбраковки (диагноз)', 26),
         ('Вид выбытия', 13),
-        ('Направление использования', 20)
+        ('Направление использования', 22)
     ]
     
     row_num = 10
@@ -120,7 +119,6 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
     ws.row_dimensions[row_num].height = 32
     
     total_weight = 0.0
-    total_value = 0.0
     align_center = Alignment(horizontal='center', vertical='center')
     align_left = Alignment(horizontal='left', vertical='center')
     
@@ -130,9 +128,6 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
         
         w_val = float(r['weight'] or 0.0)
         total_weight += w_val
-        
-        b_val = float(r['book_value'] or 0.0)
-        total_value += b_val
         
         usage = "Сдача на мясокомбинат" if r['category'] == 'выбраковка' else "Санитарная бойня"
         
@@ -144,7 +139,6 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
             r['lactation'] or '-',
             f"{w_val:.1f}" if w_val > 0 else "-",
             f"{r['milk_yield']:.0f}" if r['milk_yield'] else "-",
-            f"{b_val:.2f}" if b_val > 0 else "-",
             r['reason'],
             r['category'].capitalize(),
             usage
@@ -154,7 +148,7 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
             cell = ws.cell(row=row_num, column=col_idx, value=val)
             cell.font = body_font
             cell.border = thin_border
-            if col_idx in [1, 2, 5, 6, 7, 8, 10]:
+            if col_idx in [1, 2, 5, 6, 7, 9]:
                 cell.alignment = align_center
             else:
                 cell.alignment = align_left
@@ -178,17 +172,11 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
     c_empty7.border = thin_border
     c_empty7.fill = header_fill
     
-    c_value = ws.cell(row=row_num, column=8, value=f"{total_value:.2f} руб." if total_value > 0 else "-")
-    c_value.font = bold_body_font
-    c_value.alignment = Alignment(horizontal='center', vertical='center')
-    c_value.border = thin_border
-    c_value.fill = header_fill
-    
-    ws.merge_cells(start_row=row_num, start_column=9, end_row=row_num, end_column=11)
-    c_count = ws.cell(row=row_num, column=9, value=f"{len(rows)} голов")
+    ws.merge_cells(start_row=row_num, start_column=8, end_row=row_num, end_column=10)
+    c_count = ws.cell(row=row_num, column=8, value=f"{len(rows)} голов")
     c_count.font = bold_body_font
     c_count.alignment = Alignment(horizontal='center', vertical='center')
-    for c in range(9, 12):
+    for c in range(8, 11):
         ws.cell(row=row_num, column=c).border = thin_border
         ws.cell(row=row_num, column=c).fill = header_fill
         

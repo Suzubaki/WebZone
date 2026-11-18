@@ -188,7 +188,6 @@ def validate_cow_payload(data, today_date=None):
     lactation_days = _parse_bounded_int(data.get('lactation_days'), 'Дни лактации (DIM)', 0, 1500, errors)
     weight = _parse_bounded_float(data.get('weight'), 'Живая масса (кг)', 1.0, 1500.0, errors)
     milk_yield = _parse_bounded_float(data.get('milk_yield'), 'Удой (кг)', 0.0, 30000.0, errors)
-    book_value = _parse_bounded_float(data.get('book_value'), 'Балансовая стоимость (BYN)', 0.0, 100000.0, errors)
     gestation_days = _parse_bounded_int(data.get('gestation_days'), 'Срок стельности (дней)', 0, 320, errors)
 
     is_pregnant_val = 1 if data.get('is_pregnant') in (1, '1', True, 'true', 'on') else 0
@@ -226,7 +225,6 @@ def validate_cow_payload(data, today_date=None):
         'age_group': age_group,
         'breed': breed,
         'milk_yield': milk_yield,
-        'book_value': book_value,
         'is_pregnant': is_pregnant_val,
         'gestation_days': gestation_days,
         'is_stillborn': 0,

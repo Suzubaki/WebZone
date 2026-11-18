@@ -339,7 +339,7 @@ def override_url_for():
             'download_db_backup': 'admin.download_backup',
             'restore_db_backup': 'admin.restore_backup',
             'seed_test_data': 'admin.seed_test_data',
-            'pricing': 'admin.pricing',
+            'settings': 'admin.settings',
             'get_farms': 'api.get_farms',
             'get_reasons': 'api.get_reasons',
             'stillborn': 'stillborn.stillborn_list',

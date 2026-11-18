@@ -182,25 +182,21 @@ def generate_test_cows(count=1000, stillborn_count=None, reset=False):
             dim = None
             weight = round(rng.uniform(34, 88), 1)
             milk_yield = None
-            book_value = round(rng.uniform(420, 960), 2)
         elif ag == 'Ремонтный молодняк (6–18 мес.)':
             lact = 0
             dim = None
             weight = round(rng.uniform(195, 365), 1)
             milk_yield = None
-            book_value = round(rng.uniform(1350, 1950), 2)
         elif ag == 'Бычки на откорме':
             lact = 0
             dim = None
             weight = round(rng.uniform(290, 520), 1)
             milk_yield = None
-            book_value = round(rng.uniform(1450, 2350), 2)
         elif ag == 'Нетели (>18 мес.)':
             lact = 0
             dim = None
             weight = round(rng.uniform(405, 515), 1)
             milk_yield = None
-            book_value = round(rng.uniform(2450, 3050), 2)
             if rng.random() < 0.65:
                 is_pregnant = 1
                 gestation_days = rng.randint(75, 258)
@@ -209,13 +205,11 @@ def generate_test_cows(count=1000, stillborn_count=None, reset=False):
             dim = rng.randint(1, 30)
             weight = round(rng.uniform(485, 650), 1)
             milk_yield = round(rng.uniform(4200, 9100), 0) if rng.random() < 0.90 else None
-            book_value = round(rng.uniform(2700, 3450), 2)
         elif ag == 'Сухостойные коровы':
             lact = rng.randint(1, 5)
             dim = rng.randint(295, 355)
             weight = round(rng.uniform(560, 720), 1)
             milk_yield = round(rng.uniform(4900, 9000), 0)
-            book_value = round(rng.uniform(2750, 3400), 2)
             if rng.random() < 0.85:
                 is_pregnant = 1
                 gestation_days = rng.randint(215, 276)
@@ -224,7 +218,6 @@ def generate_test_cows(count=1000, stillborn_count=None, reset=False):
             dim = rng.randint(31, 330)
             weight = round(rng.uniform(475, 610), 1)
             milk_yield = round(rng.uniform(3900, 8800), 0) if rng.random() < 0.92 else None
-            book_value = round(rng.uniform(2600, 3350), 2)
             if dim > 80 and rng.random() < 0.28:
                 is_pregnant = 1
                 gestation_days = rng.randint(35, min(240, dim - 45))
@@ -244,7 +237,6 @@ def generate_test_cows(count=1000, stillborn_count=None, reset=False):
                 milk_yield = round(rng.uniform(8550, 10200), 0)
             else:
                 milk_yield = None
-            book_value = round(rng.uniform(2400, 3600), 2)
             if dim > 85 and rng.random() < 0.26:
                 is_pregnant = 1
                 gestation_days = rng.randint(35, min(245, dim - 50))
@@ -264,16 +256,16 @@ def generate_test_cows(count=1000, stillborn_count=None, reset=False):
 
         cow_rows.append((
             cow_id, ear_tag, farm, cat, reason, disposal_d,
-            lact, dim, lact_phase, p_sys, weight, notes, ag, breed, milk_yield, book_value,
+            lact, dim, lact_phase, p_sys, weight, notes, ag, breed, milk_yield,
             is_pregnant, gestation_days, 0, user_id
         ))
 
     cursor.executemany('''
         INSERT INTO cows (
             cow_id, ear_tag, farm_name, category, reason, disposal_date,
-            lactation, lactation_days, lactation_phase, pathology_system, weight, notes, age_group, breed, milk_yield, book_value,
+            lactation, lactation_days, lactation_phase, pathology_system, weight, notes, age_group, breed, milk_yield,
             is_pregnant, gestation_days, is_stillborn, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', cow_rows)
 
     # Генерация записей мертворождений и абортов

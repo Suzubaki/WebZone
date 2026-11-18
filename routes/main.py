@@ -45,19 +45,10 @@ def dashboard():
         except (ValueError, TypeError):
             return float(default)
 
-    dp = Config.DEFAULT_PRICES
     sc = Config.DEFAULT_SCORECARD_THRESHOLDS
     an = Config.DEFAULT_ANALYTICS_PARAMS
 
-    pricing_data = {
-        'price_calves': _s('price_calves', dp['price_calves']),
-        'price_youngstock': _s('price_youngstock', dp['price_youngstock']),
-        'price_heifers': _s('price_heifers', dp['price_heifers']),
-        'price_cows': _s('price_cows', dp['price_cows']),
-        'price_dry_cows': _s('price_dry_cows', dp['price_dry_cows']),
-        'meat_price_per_kg': _s('meat_price_per_kg', dp['meat_price_per_kg']),
-        'milk_price_per_kg': _s('milk_price_per_kg', dp['milk_price_per_kg']),
-        'replacement_cost': _s('replacement_cost', dp['replacement_cost']),
+    settings_data = {
         'norm_fresh_cow_disposal': _s('norm_fresh_cow_disposal', sc['norm_fresh_cow_disposal']),
         'warn_fresh_cow_disposal': _s('warn_fresh_cow_disposal', sc['warn_fresh_cow_disposal']),
         'crit_fresh_cow_disposal': _s('crit_fresh_cow_disposal', sc['crit_fresh_cow_disposal']),
@@ -75,9 +66,6 @@ def dashboard():
         'crit_mastitis_disorders': _s('crit_mastitis_disorders', sc['crit_mastitis_disorders']),
         'matrix_warn_pct': _s('matrix_warn_pct', an['matrix_warn_pct']),
         'matrix_crit_pct': _s('matrix_crit_pct', an['matrix_crit_pct']),
-        'sanitary_meat_factor': _s('sanitary_meat_factor', an['sanitary_meat_factor']),
-        'standard_lactation_days': int(_s('standard_lactation_days', an['standard_lactation_days'])),
-        'default_daily_milk_kg': _s('default_daily_milk_kg', an['default_daily_milk_kg']),
         'high_yield_threshold_kg': int(_s('high_yield_threshold_kg', an['high_yield_threshold_kg']))
     }
     
@@ -87,4 +75,4 @@ def dashboard():
                            selected_farm=selected_farm,
                            d=dashboard_data,
                            alerts=alerts,
-                           pricing=pricing_data)
+                           settings=settings_data)

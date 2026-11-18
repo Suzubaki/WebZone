@@ -263,7 +263,6 @@ def edit_cow(cow_id):
                 'age_group': request.form.get('age_group') or cow.get('age_group'),
                 'breed': request.form.get('breed') or cow.get('breed'),
                 'milk_yield': request.form.get('milk_yield'),
-                'book_value': request.form.get('book_value'),
                 'is_pregnant': cleaned['is_pregnant'],
                 'gestation_days': cleaned['gestation_days'],
             })
@@ -292,7 +291,6 @@ def edit_cow(cow_id):
                 age_group = ?,
                 breed = ?,
                 milk_yield = ?,
-                book_value = ?,
                 is_pregnant = ?,
                 gestation_days = ?,
                 is_stillborn = 0,
@@ -303,7 +301,7 @@ def edit_cow(cow_id):
             cleaned['category'], cleaned['reason'], cleaned['disposal_date'], cleaned['ear_tag'],
             cleaned['lactation'], cleaned['lactation_days'], cleaned['lactation_phase'], cleaned['pathology_system'],
             cleaned['weight'], cleaned['notes'], cleaned['age_group'], cleaned['breed'],
-            cleaned['milk_yield'], cleaned['book_value'], cleaned['is_pregnant'],
+            cleaned['milk_yield'], cleaned['is_pregnant'],
             cleaned['gestation_days'], session.get('user_id'), cow_id
         ))
         conn.commit()

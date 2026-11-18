@@ -81,7 +81,7 @@ class CattleSystemTestCase(unittest.TestCase):
 
     # 1. ТЕСТЫ АВТОРИЗАЦИИ И ДОСТУПА
     def test_01_public_and_auth_protection(self):
-        for route in ['/dashboard', '/cows', '/pricing', '/stillborn', '/reports']:
+        for route in ['/dashboard', '/cows', '/settings', '/stillborn', '/reports']:
             res = self.client.get(route, follow_redirects=False)
             self.assertIn(res.status_code, [302, 401], f"Маршрут {route} должен быть защищен")
 
@@ -116,29 +116,31 @@ class CattleSystemTestCase(unittest.TestCase):
             self.assertIn(ek, sc_keys)
         self.logout()
 
-    # 3. ТЕСТЫ НАСТРОЕК PRICING (С РЕАЛЬНЫМ CSRF)
-    def test_03_pricing_and_settings(self):
+    # 3. ТЕСТЫ НАСТРОЕК И НОРМАТИВОВ (С РЕАЛЬНЫМ CSRF)
+    def test_03_settings_and_thresholds(self):
         self.login('admin', 'AdminTest#123')
-        csrf = self.get_csrf_token('/pricing')
+        self.assertEqual(self.client.get('/pricing').status_code, 404)
+
+        csrf = self.get_csrf_token('/settings')
 
         test_payload = {
             'csrf_token': csrf,
-            'meat_price_per_kg': '6.80',
-            'milk_price_per_kg': '1.25',
-            'replacement_cost': '3050.0',
-            'price_calves': '950.0',
-            'norm_mortality_rate': '24.0'
+            'norm_mortality_rate': '24.0',
+            'matrix_warn_pct': '16.0',
+            'high_yield_threshold_kg': '7000',
+            'farm_org_name': 'ОАО «Новая Припять» Тест'
         }
-        res = self.client.post('/pricing', data=test_payload, follow_redirects=True)
+        res = self.client.post('/settings', data=test_payload, follow_redirects=True)
         self.assertEqual(res.status_code, 200)
 
-        self.assertAlmostEqual(float(get_setting('meat_price_per_kg')), 6.80)
-        self.assertAlmostEqual(float(get_setting('milk_price_per_kg')), 1.25)
-        self.assertAlmostEqual(float(get_setting('replacement_cost')), 3050.0)
+        self.assertAlmostEqual(float(get_setting('norm_mortality_rate')), 24.0)
+        self.assertAlmostEqual(float(get_setting('matrix_warn_pct')), 16.0)
+        self.assertAlmostEqual(float(get_setting('high_yield_threshold_kg')), 7000.0)
+        self.assertEqual(get_setting('farm_org_name'), 'ОАО «Новая Припять» Тест')
 
         ajax_res = self.client.post(
-            '/pricing',
-            json={'meat_price_per_kg': '6.50'},
+            '/settings',
+            json={'norm_mortality_rate': '25.0'},
             headers={'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': csrf}
         )
         self.assertEqual(ajax_res.status_code, 200)
@@ -161,8 +163,7 @@ class CattleSystemTestCase(unittest.TestCase):
             'lactation_phase': 'Раздой (31-100 дн)',
             'weight': '540',
             'age_group': 'Коровы 1-й лактации (первотёлки)',
-            'milk_yield': '6500',
-            'book_value': '3200'
+            'milk_yield': '6500'
         }
         res_add = self.client.post('/add_cow', data=cow_payload, follow_redirects=True)
         self.assertEqual(res_add.status_code, 200)
@@ -267,7 +268,7 @@ class CattleSystemTestCase(unittest.TestCase):
         res_html_csrf = self.client.post('/login', data={'username': 'admin', 'password': '123'})
         self.assertEqual(res_html_csrf.status_code, 400)
 
-        res_json_csrf = self.client.post('/pricing', json={'meat_price_per_kg': '7.0'}, headers={'X-Requested-With': 'XMLHttpRequest'})
+        res_json_csrf = self.client.post('/settings', json={'norm_mortality_rate': '22.0'}, headers={'X-Requested-With': 'XMLHttpRequest'})
         self.assertEqual(res_json_csrf.status_code, 400)
         self.assertEqual(res_json_csrf.get_json().get('error'), 'csrf_error')
 
@@ -350,8 +351,7 @@ class CattleSystemTestCase(unittest.TestCase):
             'lactation_days': '10',
             'weight': '500',
             'age_group': 'Коровы 1-й лактации (первотёлки)',
-            'milk_yield': '6000',
-            'book_value': '3000'
+            'milk_yield': '6000'
         }, follow_redirects=True)
         self.assertIn('позже сегодняшнего дня'.encode('utf-8'), res_future.data)
 
@@ -373,6 +373,19 @@ class CattleSystemTestCase(unittest.TestCase):
         cur.execute("SELECT id FROM stillbirth_records WHERE mother_tag = 'BY555444333'")
         self.assertIsNone(cur.fetchone())
         conn.close()
+
+        # 8.6 Проверка полного отсутствия экономической/финансовой части
+        self.assertFalse(hasattr(Config, 'DEFAULT_PRICES'))
+        res_add_get = self.client.get('/add_cow')
+        self.assertEqual(res_add_get.status_code, 200)
+        self.assertNotIn(b'book_value', res_add_get.data)
+        self.assertNotIn(b'BYN', res_add_get.data)
+
+        res_dash_clean = self.client.get('/dashboard')
+        self.assertEqual(res_dash_clean.status_code, 200)
+        self.assertNotIn(b'BYN', res_dash_clean.data)
+        self.assertNotIn(b'economicsChart', res_dash_clean.data)
+
         self.logout()
 
     # 9. ПРОВЕРКА ПЕРВИЧНОГО СИДИНГА create_default_users ТОЛЬКО ПРИ ПУСТОЙ БД

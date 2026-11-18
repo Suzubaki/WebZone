@@ -174,26 +174,21 @@ def seed_test_data():
     flash('Успешно добавлено 1 000 коров в базу данных!', 'success')
     return redirect(url_for('cows.view_cows'))
 
-@admin_bp.route('/pricing', methods=['GET', 'POST'])
+@admin_bp.route('/settings', methods=['GET', 'POST'])
 @admin_required
-def pricing():
-    """Просмотр и редактирование нормативов цен, порогов тревог, аналитических коэффициентов и реквизитов предприятия"""
+def settings():
+    """Просмотр и редактирование зоотехнических нормативов, порогов тревог, коэффициентов и реквизитов предприятия"""
     import math
 
-    dp = Config.DEFAULT_PRICES
     sc = Config.DEFAULT_SCORECARD_THRESHOLDS
     an = Config.DEFAULT_ANALYTICS_PARAMS
 
     numeric_fields = [
-        'price_calves', 'price_youngstock', 'price_heifers', 'price_cows', 'price_dry_cows',
-        'meat_price_per_kg', 'milk_price_per_kg', 'replacement_cost',
         'norm_fresh_cow_disposal', 'warn_fresh_cow_disposal', 'crit_fresh_cow_disposal',
         'norm_first_lactation_culling', 'warn_first_lactation_culling', 'crit_first_lactation_culling',
         'norm_mortality_rate', 'warn_mortality_rate', 'crit_mortality_rate',
         'norm_locomotor_disorders', 'warn_locomotor_disorders', 'crit_locomotor_disorders',
         'norm_mastitis_disorders', 'warn_mastitis_disorders', 'crit_mastitis_disorders',
-        'sanitary_meat_factor', 'standard_lactation_days', 'default_daily_milk_kg',
-        'default_weight_cow', 'default_weight_youngstock', 'default_weight_calf',
         'high_yield_threshold_kg', 'matrix_warn_pct', 'matrix_crit_pct',
         'alert_death_growth_ratio', 'alert_cluster_min_count'
     ]
@@ -207,7 +202,7 @@ def pricing():
             if is_ajax:
                 return jsonify({'status': 'error', 'message': 'Редактирование доступно только администраторам'}), 403
             flash('Редактирование доступно только администраторам', 'danger')
-            return redirect(url_for('admin.pricing'))
+            return redirect(url_for('admin.settings'))
 
         req_data = request.get_json(silent=True)
         if req_data is None:
@@ -239,14 +234,14 @@ def pricing():
             if is_ajax:
                 return jsonify({'status': 'error', 'message': msg, 'fields': invalid_fields}), 400
             flash(msg, 'danger')
-            return redirect(url_for('admin.pricing'))
+            return redirect(url_for('admin.settings'))
 
         if not parsed_updates:
             msg = 'Не передано ни одного параметра для сохранения.'
             if is_ajax:
                 return jsonify({'status': 'error', 'message': msg}), 400
             flash(msg, 'warning')
-            return redirect(url_for('admin.pricing'))
+            return redirect(url_for('admin.settings'))
 
         def _merged_float(key, default_val):
             raw_v = parsed_updates.get(key, current_settings.get(key, default_val))
@@ -254,22 +249,6 @@ def pricing():
                 return float(raw_v)
             except (ValueError, TypeError):
                 return float(default_val)
-
-        # Проверка логических ограничений (0<=санфактор<=1, Порог Норма <= Внимание <= Критично)
-        san_factor = _merged_float('sanitary_meat_factor', an['sanitary_meat_factor'])
-        if san_factor < 0.0 or san_factor > 1.0:
-            msg = 'Коэффициент санприрезки должен быть в диапазоне от 0.00 до 1.00 (0%–100%).'
-            if is_ajax:
-                return jsonify({'status': 'error', 'message': msg, 'fields': ['sanitary_meat_factor']}), 400
-            flash(msg, 'danger')
-            return redirect(url_for('admin.pricing'))
-
-        if _merged_float('standard_lactation_days', an['standard_lactation_days']) < 1:
-            msg = 'Стандартная продолжительность лактации должна быть больше 0 дней.'
-            if is_ajax:
-                return jsonify({'status': 'error', 'message': msg, 'fields': ['standard_lactation_days']}), 400
-            flash(msg, 'danger')
-            return redirect(url_for('admin.pricing'))
 
         threshold_triples = [
             ('Выбытие новотельных (0–30 DIM)', 'norm_fresh_cow_disposal', 'warn_fresh_cow_disposal', 'crit_fresh_cow_disposal'),
@@ -287,7 +266,7 @@ def pricing():
                 if is_ajax:
                     return jsonify({'status': 'error', 'message': msg, 'fields': [k_norm, k_warn, k_crit]}), 400
                 flash(msg, 'danger')
-                return redirect(url_for('admin.pricing'))
+                return redirect(url_for('admin.settings'))
 
         m_warn = _merged_float('matrix_warn_pct', an['matrix_warn_pct'])
         m_crit = _merged_float('matrix_crit_pct', an['matrix_crit_pct'])
@@ -296,7 +275,7 @@ def pricing():
             if is_ajax:
                 return jsonify({'status': 'error', 'message': msg, 'fields': ['matrix_warn_pct', 'matrix_crit_pct']}), 400
             flash(msg, 'danger')
-            return redirect(url_for('admin.pricing'))
+            return redirect(url_for('admin.settings'))
 
         conn = get_db_connection()
         try:
@@ -317,16 +296,16 @@ def pricing():
             farm_name='Admin',
             action='UPDATE_SETTINGS',
             entity_type='SETTINGS',
-            details=f"Обновлены нормативы и настройки ({len(parsed_updates)} параметров): мясо={parsed_updates.get('meat_price_per_kg', '-')}, молоко={parsed_updates.get('milk_price_per_kg', '-')}, ремонт={parsed_updates.get('replacement_cost', '-')}",
+            details=f"Обновлены зоотехнические нормативы и настройки ({len(parsed_updates)} параметров)",
             user_id=session.get('user_id'),
             ip_address=request.remote_addr
         )
 
         if is_ajax:
-            return jsonify({'status': 'success', 'message': 'Экономические нормативы и параметры расчётов успешно сохранены!', 'updated': parsed_updates})
+            return jsonify({'status': 'success', 'message': 'Нормативы, пороги тревог и параметры успешно сохранены!', 'updated': parsed_updates})
 
-        flash('Экономические нормативы, пороги и настройки предприятия успешно обновлены!', 'success')
-        return redirect(url_for('admin.pricing'))
+        flash('Зоотехнические нормативы, пороги и настройки предприятия успешно обновлены!', 'success')
+        return redirect(url_for('admin.settings'))
 
     def _f(k, default):
         try:
@@ -334,15 +313,7 @@ def pricing():
         except (ValueError, TypeError):
             return float(default)
 
-    pricing_data = {
-        'price_calves': _f('price_calves', dp['price_calves']),
-        'price_youngstock': _f('price_youngstock', dp['price_youngstock']),
-        'price_heifers': _f('price_heifers', dp['price_heifers']),
-        'price_cows': _f('price_cows', dp['price_cows']),
-        'price_dry_cows': _f('price_dry_cows', dp['price_dry_cows']),
-        'meat_price_per_kg': _f('meat_price_per_kg', dp['meat_price_per_kg']),
-        'milk_price_per_kg': _f('milk_price_per_kg', dp['milk_price_per_kg']),
-        'replacement_cost': _f('replacement_cost', dp['replacement_cost']),
+    settings_data = {
         'norm_fresh_cow_disposal': _f('norm_fresh_cow_disposal', sc['norm_fresh_cow_disposal']),
         'warn_fresh_cow_disposal': _f('warn_fresh_cow_disposal', sc['warn_fresh_cow_disposal']),
         'crit_fresh_cow_disposal': _f('crit_fresh_cow_disposal', sc['crit_fresh_cow_disposal']),
@@ -358,12 +329,6 @@ def pricing():
         'norm_mastitis_disorders': _f('norm_mastitis_disorders', sc['norm_mastitis_disorders']),
         'warn_mastitis_disorders': _f('warn_mastitis_disorders', sc['warn_mastitis_disorders']),
         'crit_mastitis_disorders': _f('crit_mastitis_disorders', sc['crit_mastitis_disorders']),
-        'sanitary_meat_factor': _f('sanitary_meat_factor', an['sanitary_meat_factor']),
-        'standard_lactation_days': int(_f('standard_lactation_days', an['standard_lactation_days'])),
-        'default_daily_milk_kg': _f('default_daily_milk_kg', an['default_daily_milk_kg']),
-        'default_weight_cow': _f('default_weight_cow', an['default_weight_cow']),
-        'default_weight_youngstock': _f('default_weight_youngstock', an['default_weight_youngstock']),
-        'default_weight_calf': _f('default_weight_calf', an['default_weight_calf']),
         'high_yield_threshold_kg': int(_f('high_yield_threshold_kg', an['high_yield_threshold_kg'])),
         'matrix_warn_pct': _f('matrix_warn_pct', an['matrix_warn_pct']),
         'matrix_crit_pct': _f('matrix_crit_pct', an['matrix_crit_pct']),
@@ -373,4 +338,4 @@ def pricing():
         'farm_unp': current_settings.get('farm_unp', Config.DEFAULT_UNP)
     }
 
-    return render_template('pricing.html', pricing=pricing_data, user_type=session.get('user_type'))
+    return render_template('settings.html', settings=settings_data, user_type=session.get('user_type'))

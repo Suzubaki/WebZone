@@ -71,7 +71,6 @@
                             <th>Лактация</th>
                             <th>Живая масса (кг)</th>
                             <th>Удой за посл. лактацию (кг)</th>
-                            <th>Балансовая стоим. (BYN)</th>
                             <th>Причина выбраковки (диагноз)</th>
                             <th>Дальнейшее использование</th>
                         </tr>
@@ -86,12 +85,11 @@
                             <td class="text-center">{{ cow.lactation or '-' }}</td>
                             <td class="text-center">{{ cow.weight or '-' }}</td>
                             <td class="text-center">{{ cow.milk_yield or '-' }}</td>
-                            <td class="text-center">{{ cow.book_value or '-' }}</td>
                             <td>{{ cow.reason }}</td>
                             <td>{{ 'Сдача на мясокомбинат' if cow.category == 'выбраковка' else 'Санбойня' }}</td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="10" class="text-center py-3 text-muted">Выбракованных животных за указанный период не обнаружено</td></tr>
+                        <tr><td colspan="9" class="text-center py-3 text-muted">Выбракованных животных за указанный период не обнаружено</td></tr>
                         {% endfor %}
                     </tbody>
                     <tfoot class="table-light fw-bold">
@@ -99,7 +97,6 @@
                             <td colspan="5" class="text-end">ИТОГО ВЫБРАКОВАНО:</td>
                             <td class="text-center">{{ total_weight }} кг</td>
                             <td class="text-center">-</td>
-                            <td class="text-center">{{ total_value }} руб.</td>
                             <td colspan="2" class="text-center">{{ cows|length }} голов</td>
                         </tr>
                     </tfoot>

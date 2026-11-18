@@ -115,7 +115,7 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
     try:
         cursor.execute(f'''
             SELECT id, cow_id, ear_tag, farm_name, category, reason, disposal_date, 
-                   lactation, lactation_days, lactation_phase, pathology_system, weight, age_group, milk_yield, book_value,
+                   lactation, lactation_days, lactation_phase, pathology_system, weight, age_group, milk_yield,
                    is_pregnant, gestation_days, is_stillborn
             FROM cows
             {where_clause}
@@ -128,7 +128,7 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             init_db()
             cursor.execute(f'''
                 SELECT id, cow_id, ear_tag, farm_name, category, reason, disposal_date, 
-                       lactation, lactation_days, lactation_phase, pathology_system, weight, age_group, milk_yield, book_value,
+                       lactation, lactation_days, lactation_phase, pathology_system, weight, age_group, milk_yield,
                        is_pregnant, gestation_days, is_stillborn
                 FROM cows
                 {where_clause}
@@ -147,27 +147,8 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
         except (ValueError, TypeError):
             return float(default)
 
-    dp = Config.DEFAULT_PRICES
     an = Config.DEFAULT_ANALYTICS_PARAMS
     sc = Config.DEFAULT_SCORECARD_THRESHOLDS
-
-    dynamic_prices = {
-        'телята': _setting_float('price_calves', dp['price_calves']),
-        'молодняк': _setting_float('price_youngstock', dp['price_youngstock']),
-        'нетели': _setting_float('price_heifers', dp['price_heifers']),
-        'дойное': _setting_float('price_cows', dp['price_cows']),
-        'сухостой': _setting_float('price_dry_cows', dp['price_dry_cows'])
-    }
-    meat_price_per_kg = _setting_float('meat_price_per_kg', dp['meat_price_per_kg'])
-    milk_price_per_kg = _setting_float('milk_price_per_kg', dp['milk_price_per_kg'])
-    replacement_cost = _setting_float('replacement_cost', dp['replacement_cost'])
-
-    sanitary_meat_factor = min(1.0, max(0.0, _setting_float('sanitary_meat_factor', an['sanitary_meat_factor'])))
-    standard_lact_days = max(1, int(_setting_float('standard_lactation_days', an['standard_lactation_days'])))
-    default_daily_milk = max(0.1, _setting_float('default_daily_milk_kg', an['default_daily_milk_kg']))
-    w_cow = max(1.0, _setting_float('default_weight_cow', an['default_weight_cow']))
-    w_young = max(1.0, _setting_float('default_weight_youngstock', an['default_weight_youngstock']))
-    w_calf = max(1.0, _setting_float('default_weight_calf', an['default_weight_calf']))
 
     high_yield_thresh = max(1000.0, _setting_float('high_yield_threshold_kg', an['high_yield_threshold_kg']))
     milk_bin_1 = min(an['milk_yield_bin_1'], high_yield_thresh * 0.75)
@@ -176,29 +157,8 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
     matrix_crit_pct = max(matrix_warn_pct, _setting_float('matrix_crit_pct', an['matrix_crit_pct']))
     farm_matrix_min_head = int(an['farm_matrix_min_head'])
 
-    def estimate_val(book_val, norm_grp):
-        if book_val is not None and book_val > 0:
-            return float(book_val)
-        if norm_grp == 'Телята (до 6 мес.)':
-            return dynamic_prices['телята']
-        if norm_grp == 'Ремонтный молодняк (6–18 мес.)' or norm_grp == 'Бычки на откорме':
-            return dynamic_prices['молодняк']
-        if norm_grp == 'Нетели (>18 мес.)':
-            return dynamic_prices['нетели']
-        if norm_grp == 'Сухостойные коровы':
-            return dynamic_prices['сухостой']
-        return dynamic_prices['дойное']
-
     # Инициализация аккумуляторов для единого прохода O(N)
     category_counts = {'падёж': 0, 'выбраковка': 0, 'санитарный': 0}
-    total_loss_byn = 0.0
-    death_loss_byn = 0.0
-    culling_loss_byn = 0.0
-    culled_live_weight_total = 0.0
-    estimated_meat_revenue_byn = 0.0
-    unrealized_milk_loss_byn = 0.0
-    unrealized_milk_kg_total = 0.0
-    unrecovered_heifer_loss_byn = 0.0
     total_disposals = 0
 
     standard_groups = (
@@ -215,7 +175,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
     age_group_data = {
         g: {
             'total': 0, 'падёж': 0, 'выбраковка': 0, 'санитарный': 0,
-            'loss': 0.0, 'death_loss': 0.0, 'culling_loss': 0.0,
             'dim_sum': 0, 'dim_cnt': 0, 'weight_sum': 0.0, 'weight_cnt': 0,
             'reasons': {}, 'culling_reasons': {}, 'death_reasons': {}, 'sanitary_reasons': {}
         }
@@ -279,7 +238,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
 
     pregnant_cows = []
     adult_cows_total = 0
-    pregnant_loss_byn_sum = 0.0
     gest_sum = 0
     gest_cnt = 0
     preg_death = 0
@@ -309,7 +267,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
         cat = c['category']
         reason = c['reason'] or 'Не указана'
         reason_lower = reason.lower()
-        val = estimate_val(c['book_value'], norm_grp)
 
         # Стельность
         if norm_grp not in _non_adult_for_preg:
@@ -317,7 +274,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
         g_days = c['gestation_days'] or 0
         if c['is_pregnant'] == 1 or g_days > 0 or 'стельн' in reason_lower:
             pregnant_cows.append(c)
-            pregnant_loss_byn_sum += val
             if g_days > 0:
                 gest_sum += g_days
                 gest_cnt += 1
@@ -332,10 +288,9 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
 
             fp = farm_preg_stats.get(f_name)
             if fp is None:
-                fp = {'count': 0, 'death': 0, 'cull': 0, 'loss': 0.0}
+                fp = {'count': 0, 'death': 0, 'cull': 0}
                 farm_preg_stats[f_name] = fp
             fp['count'] += 1
-            fp['loss'] += val
             if cat_l == 'падёж':
                 fp['death'] += 1
             else:
@@ -358,7 +313,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
         total_disposals += 1
         is_death = (cat == 'падёж')
         category_counts[cat] = category_counts.get(cat, 0) + 1
-        total_loss_byn += val
 
         raw_dim = c['lactation_days']
         dim_known = raw_dim is not None and raw_dim != ''
@@ -377,50 +331,22 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
 
         raw_w = c['weight']
         w = float(raw_w) if raw_w else 0.0
-        w_eff = w if w > 0 else (w_cow if ('Коровы' in norm_grp or 'Нетели' in norm_grp or 'Сухостой' in norm_grp) else (w_young if ('молодняк' in norm_grp.lower() or 'быч' in norm_grp.lower()) else w_calf))
-
         raw_milk = c['milk_yield']
-        if is_adult_lactating and lact > 0 and dim_known and 0 <= dim < standard_lact_days:
-            rem_days = standard_lact_days - dim
-            daily_milk = (float(raw_milk) / float(standard_lact_days)) if raw_milk else default_daily_milk
-            if daily_milk <= 0:
-                daily_milk = default_daily_milk
-            lost_milk_kg = rem_days * daily_milk
-            unrealized_milk_kg_total += lost_milk_kg
-            unrealized_milk_loss_byn += lost_milk_kg * milk_price_per_kg
-
-        if is_adult_lactating and lact == 1 and dim_known and 0 <= dim < standard_lact_days:
-            unrecovered_heifer_loss_byn += max(0.0, replacement_cost * (1.0 - (dim / float(standard_lact_days))))
-
-        if is_death:
-            death_loss_byn += val
-        elif cat == 'выбраковка':
-            culling_loss_byn += val
-            culled_live_weight_total += w_eff
-            estimated_meat_revenue_byn += w_eff * meat_price_per_kg
-        elif cat == 'санитарный':
-            culling_loss_byn += val
-            culled_live_weight_total += w_eff
-            estimated_meat_revenue_byn += w_eff * (meat_price_per_kg * sanitary_meat_factor)
 
         # ПВГ статистика
         ag_bucket = age_group_data.get(norm_grp)
         if ag_bucket is None:
             ag_bucket = {
                 'total': 0, 'падёж': 0, 'выбраковка': 0, 'санитарный': 0,
-                'loss': 0.0, 'death_loss': 0.0, 'culling_loss': 0.0,
                 'dim_sum': 0, 'dim_cnt': 0, 'weight_sum': 0.0, 'weight_cnt': 0,
                 'reasons': {}, 'culling_reasons': {}, 'death_reasons': {}, 'sanitary_reasons': {}
             }
             age_group_data[norm_grp] = ag_bucket
         ag_bucket['total'] += 1
         ag_bucket[cat] = ag_bucket.get(cat, 0) + 1
-        ag_bucket['loss'] += val
         if is_death:
-            ag_bucket['death_loss'] += val
             ag_bucket['death_reasons'][reason] = ag_bucket['death_reasons'].get(reason, 0) + 1
         else:
-            ag_bucket['culling_loss'] += val
             if cat == 'выбраковка':
                 ag_bucket['culling_reasons'][reason] = ag_bucket['culling_reasons'].get(reason, 0) + 1
             elif cat == 'санитарный':
@@ -587,12 +513,11 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             fd = {
                 'total': 0, 'death': 0, 'culling': 0, 'sanitary': 0,
                 'calves': 0, 'young': 0, 'heifers': 0, 'fresh': 0,
-                'dim_sum': 0, 'dim_cnt': 0, 'loss': 0.0,
+                'dim_sum': 0, 'dim_cnt': 0,
                 'systems': {}, 'reasons': {}
             }
             farm_data[f_name] = fd
         fd['total'] += 1
-        fd['loss'] += val
         if is_death: fd['death'] += 1
         elif cat == 'выбраковка': fd['culling'] += 1
         else: fd['sanitary'] += 1
@@ -609,13 +534,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
 
         fd['systems'][sys_name] = fd['systems'].get(sys_name, 0) + 1
         fd['reasons'][reason] = fd['reasons'].get(reason, 0) + 1
-
-    # Итоговые финансовые показатели
-    avg_head_loss = round(total_loss_byn / max(total_disposals, 1))
-    estimated_meat_revenue_byn = round(estimated_meat_revenue_byn)
-    unrealized_milk_loss_byn = round(unrealized_milk_loss_byn)
-    unrecovered_heifer_loss_byn = round(unrecovered_heifer_loss_byn)
-    net_economic_loss_byn = round(death_loss_byn + max(0.0, culling_loss_byn - estimated_meat_revenue_byn) + unrealized_milk_loss_byn + unrecovered_heifer_loss_byn)
 
     sorted_groups = sorted(age_group_data.keys(), key=lambda x: age_group_data[x]['total'], reverse=True)
     age_labels = sorted_groups
@@ -654,7 +572,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             'sanitary_pct': round((sanitary_cnt / tot) * 100, 1),
             'avg_dim': round(d_grp['dim_sum'] / d_grp['dim_cnt']) if d_grp['dim_cnt'] > 0 else 0,
             'avg_weight': round(d_grp['weight_sum'] / d_grp['weight_cnt']) if d_grp['weight_cnt'] > 0 else 0,
-            'loss_byn': round(d_grp['loss']),
             'top_reasons': top_r_str,
             'reasons_list': reasons_list,
             'culling_reasons': culling_reasons_list,
@@ -753,7 +670,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             'heifers': d['heifers'],
             'fresh_0_30': d['fresh'],
             'avg_dim': round(d['dim_sum'] / d['dim_cnt']) if d['dim_cnt'] > 0 else 0,
-            'total_loss_byn': round(d['loss']),
             'top_system': top_sys_item[0],
             'top_system_pct': round((top_sys_item[1] / tot_f) * 100, 1),
             'top_reason': top_rea_item[0],
@@ -973,7 +889,7 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
     else:
         cursor.execute(f'''
             SELECT id, cow_id, ear_tag, farm_name, category, reason, disposal_date, 
-                   lactation, weight, age_group, milk_yield, book_value,
+                   lactation, weight, age_group, milk_yield,
                    is_pregnant, gestation_days, is_stillborn
             FROM cows
             {all_time_where}
@@ -1058,14 +974,13 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
 
     pregnant_count = len(pregnant_cows)
     pregnant_pct = round((pregnant_count / adult_cows_total) * 100, 1) if adult_cows_total > 0 else 0.0
-    pregnant_loss_byn = round(pregnant_loss_byn_sum)
     avg_gestation_months = round(gest_sum / gest_cnt / 30.0, 1) if gest_cnt > 0 else 0.0
     stillborn_pct = round((stillborn_count / max(total_disposals + stillborn_count, 1)) * 100, 1)
 
     reproduction_by_farm = []
     for f_name, _ in sorted_farms:
         f_tot = farm_period_totals.get(f_name, 0)
-        fp = farm_preg_stats.get(f_name, {'count': 0, 'death': 0, 'cull': 0, 'loss': 0.0})
+        fp = farm_preg_stats.get(f_name, {'count': 0, 'death': 0, 'cull': 0})
         f_stillborn = sb_by_farm.get(f_name, 0)
         reproduction_by_farm.append({
             'farm_name': f_name,
@@ -1074,7 +989,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             'pregnant_pct': round((fp['count'] / max(f_tot, 1)) * 100, 1),
             'pregnant_death': fp['death'],
             'pregnant_culling': fp['cull'],
-            'pregnant_loss_byn': round(fp['loss']),
             'stillborn_count': f_stillborn,
             'stillborn_pct': round((f_stillborn / max(f_tot + f_stillborn, 1)) * 100, 1)
         })
@@ -1099,7 +1013,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
     reproduction_summary = {
         'pregnant_count': pregnant_count,
         'pregnant_pct': pregnant_pct,
-        'pregnant_loss_byn': pregnant_loss_byn,
         'pregnant_death_count': preg_death,
         'pregnant_culling_count': preg_culling,
         'pregnant_sanitary_count': preg_sanitary,
@@ -1189,23 +1102,7 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             'high_yield_death_count': high_yield_death_count,
             'unrecovered_cows_count': unrecovered_cows_count,
             'unrecovered_cows_pct': unrecovered_pct,
-            'culled_live_weight_total': round(culled_live_weight_total),
-            'estimated_meat_revenue_byn': estimated_meat_revenue_byn,
-            'net_economic_loss_byn': net_economic_loss_byn,
-            'meat_price_per_kg': meat_price_per_kg,
-            'milk_price_per_kg': milk_price_per_kg,
-            'replacement_cost': replacement_cost,
-            'unrealized_milk_loss_byn': unrealized_milk_loss_byn,
-            'unrealized_milk_kg_total': round(unrealized_milk_kg_total),
-            'unrecovered_heifer_loss_byn': unrecovered_heifer_loss_byn,
-            'total_loss_byn': round(total_loss_byn),
-            'death_loss_byn': round(death_loss_byn),
-            'culling_loss_byn': round(culling_loss_byn),
-            'avg_head_loss': avg_head_loss,
             'all_time_total': all_time_total,
-            'sanitary_meat_pct': round(sanitary_meat_factor * 100),
-            'standard_lact_days': standard_lact_days,
-            'default_daily_milk_kg': round(default_daily_milk, 1),
             'high_yield_threshold_kg': int(round(high_yield_thresh)),
             'pathology_group_count': len(PATHOLOGY_SYSTEM_NAMES),
             'matrix_warn_pct': matrix_warn_pct,
@@ -1267,29 +1164,6 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
                 'labels': lact_phase_labels,
                 'death_data': lact_phase_death,
                 'culling_data': lact_phase_culling
-            },
-            'economics_by_group': {
-                'labels': age_labels,
-                'data': [round(age_group_data[g]['loss']) for g in age_labels],
-                'death_data': [round(age_group_data[g]['death_loss']) for g in age_labels],
-                'culling_data': [round(age_group_data[g]['culling_loss']) for g in age_labels]
-            },
-            'economics_breakdown': {
-                'labels': [
-                    'Прямой ущерб от падежа',
-                    'Чистые потери от выбраковки',
-                    'Недополученное молоко',
-                    'Неокупленные первотёлки',
-                    'Компенсация (сдача мяса)'
-                ],
-                'data': [
-                    round(death_loss_byn),
-                    round(max(0.0, culling_loss_byn - estimated_meat_revenue_byn)),
-                    unrealized_milk_loss_byn,
-                    unrecovered_heifer_loss_byn,
-                    estimated_meat_revenue_byn
-                ],
-                'colors': ['#E11D48', '#2563EB', '#F59E0B', '#8B5CF6', '#10B981']
             },
             'pathology': {
                 'labels': [x[0] for x in sorted_pathology],

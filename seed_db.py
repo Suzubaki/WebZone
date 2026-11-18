@@ -88,20 +88,17 @@ def seed_sample_cows():
         ag = "Коровы 1-й лактации (первотёлки)" if lact == 1 else "Полновозрастные коровы (2+ лакт.)"
         w = float(random.randint(480, 660))
         milk = float(random.randint(5500, 9200))
-        bv = float(random.randint(1800, 3100))
         
         if "телят" in reason.lower() or "эшерихиоз" in reason.lower():
             ag = "Телята (до 6 мес.)"
             lact = 0
             w = float(random.randint(32, 85))
             milk = 0.0
-            bv = float(random.randint(260, 520))
         elif "роды" in reason.lower() or "матки" in reason.lower():
             ag = "Нетели (>18 мес.)"
             lact = 0
             w = float(random.randint(430, 530))
             milk = 0.0
-            bv = float(random.randint(2600, 3300))
             
         user_id = farm_users.get(farm, 1)
             
@@ -109,10 +106,10 @@ def seed_sample_cows():
         p_sys = classify_pathology_system(reason)
         cursor.execute('''
             INSERT INTO cows (cow_id, ear_tag, farm_name, category, reason, disposal_date, 
-                              lactation, lactation_phase, pathology_system, weight, notes, age_group, breed, milk_yield, book_value, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              lactation, lactation_phase, pathology_system, weight, notes, age_group, breed, milk_yield, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (cow_num, tag, farm, cat, reason, disposal_d, 
-              lact, lact_phase, p_sys, w, f"Выбытие скота ({cat})", ag, breed, milk, bv, user_id))
+              lact, lact_phase, p_sys, w, f"Выбытие скота ({cat})", ag, breed, milk, user_id))
               
     conn.commit()
     conn.close()

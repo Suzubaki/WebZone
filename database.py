@@ -301,7 +301,7 @@ def init_db():
         )
     ''')
 
-    # 5. Системные настройки (включая экономические расценки)
+    # 5. Системные настройки (зоотехнические нормативы, пороги и реквизиты)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS system_settings (
             key TEXT PRIMARY KEY,
@@ -410,18 +410,9 @@ def init_db():
                 ''', (cat, reason))
 
     # Заполнение настроек по умолчанию, если отсутствуют
-    p = Config.DEFAULT_PRICES
     sc = Config.DEFAULT_SCORECARD_THRESHOLDS
     an = Config.DEFAULT_ANALYTICS_PARAMS
     default_settings = [
-        ('meat_price_per_kg', str(p['meat_price_per_kg']), 'Закупочная цена 1 кг живой массы КРС (BYN)'),
-        ('milk_price_per_kg', str(p['milk_price_per_kg']), 'Закупочная цена 1 кг базисного молока (BYN)'),
-        ('replacement_cost', str(p['replacement_cost']), 'Стоимость восстановления головы / нетели (BYN)'),
-        ('price_calves', str(p['price_calves']), 'Нормативная стоимость телят (0–6 мес.) (BYN/гол.)'),
-        ('price_youngstock', str(p['price_youngstock']), 'Нормативная стоимость ремонтного молодняка (6–18 мес.) (BYN/гол.)'),
-        ('price_heifers', str(p['price_heifers']), 'Нормативная стоимость нетелей (BYN/гол.)'),
-        ('price_cows', str(p['price_cows']), 'Нормативная стоимость коров дойного стада (BYN/гол.)'),
-        ('price_dry_cows', str(p['price_dry_cows']), 'Нормативная стоимость сухостойных коров (BYN/гол.)'),
         ('norm_fresh_cow_disposal', str(sc['norm_fresh_cow_disposal']), 'Порог нормы: выбытие новотельных коров 0–30 DIM (%)'),
         ('warn_fresh_cow_disposal', str(sc['warn_fresh_cow_disposal']), 'Порог внимания: выбытие новотельных коров 0–30 DIM (%)'),
         ('crit_fresh_cow_disposal', str(sc['crit_fresh_cow_disposal']), 'Критический порог: выбытие новотельных коров 0–30 DIM (%)'),
@@ -437,12 +428,6 @@ def init_db():
         ('norm_mastitis_disorders', str(sc['norm_mastitis_disorders']), 'Порог нормы: заболевания вымени (%)'),
         ('warn_mastitis_disorders', str(sc['warn_mastitis_disorders']), 'Порог внимания: заболевания вымени (%)'),
         ('crit_mastitis_disorders', str(sc['crit_mastitis_disorders']), 'Критический порог: заболевания вымени (%)'),
-        ('sanitary_meat_factor', str(an['sanitary_meat_factor']), 'Коэффициент зачётного веса/цены при санитарном забое (0.0–1.0)'),
-        ('standard_lactation_days', str(an['standard_lactation_days']), 'Стандартная продолжительность лактации для расчёта упущенного молока (дн.)'),
-        ('default_daily_milk_kg', str(an['default_daily_milk_kg']), 'Базовый суточный удой коровы при отсутствии данных о надое (кг)'),
-        ('default_weight_cow', str(an['default_weight_cow']), 'Живая масса взрослой коровы по умолчанию (кг)'),
-        ('default_weight_youngstock', str(an['default_weight_youngstock']), 'Живая масса молодняка по умолчанию (кг)'),
-        ('default_weight_calf', str(an['default_weight_calf']), 'Живая масса телёнка по умолчанию (кг)'),
         ('high_yield_threshold_kg', str(an['high_yield_threshold_kg']), 'Граница отнесения коровы к высокопродуктивным (кг/лакт.)'),
         ('matrix_warn_pct', str(an['matrix_warn_pct']), 'Порог внимания ячейки матрицы ферм (%)'),
         ('matrix_crit_pct', str(an['matrix_crit_pct']), 'Критический порог ячейки матрицы ферм (%)'),

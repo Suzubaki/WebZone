@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}Нормативы, пороги тревог и реквизиты - {{ org_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-3">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+        <div>
+            <h3 class="fw-bold mb-1 d-flex align-items-center gap-2">
+                <i class="bi bi-sliders text-warning"></i> Нормативы, пороги тревог и реквизиты
+            </h3>
+            <p class="text-muted mb-0">Единый центр настройки целевых показателей Scorecard, порогов зооветеринарного риска и реквизитов организации</p>
+        </div>
+        <div>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary fw-semibold">
+                <i class="bi bi-arrow-left"></i> Вернуться в дашборд
+            </a>
+        </div>
+    </div>
+
+    <div id="settingsValidationAlert" class="alert alert-danger d-none mb-3" role="alert"></div>
+    <form method="POST" action="{{ url_for('settings') }}" id="settingsForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <!-- 1. Матрица порогов тревог (Scorecard %) -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow-sm border-0 rounded-4 overflow-hidden mb-4">
+                    <div class="card-header bg-dark text-white py-3 px-4 d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-shield-exclamation text-warning me-2"></i> 1. Зоотехнические нормативы и 3-уровневые пороги тревог (Scorecard %)</h5>
+                        <span class="badge bg-warning text-dark fw-bold">Светофор рисков</span>
+                    </div>
+                    <div class="card-body p-4">
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-hover align-middle mb-0 small">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th style="width: 38%;">Индикатор зооветеринарного контроля</th>
+                                        <th class="text-success text-center" style="width: 20%;">🟢 Целевая норма</th>
+                                        <th class="text-warning text-center" style="width: 20%;">🟡 Внимание</th>
+                                        <th class="text-danger text-center" style="width: 22%;">🔴 Критический риск</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><strong>Макс. выбытие новотельных коров (0–30 DIM)</strong></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-success fw-bold" name="norm_fresh_cow_disposal" value="{{ settings.norm_fresh_cow_disposal if settings.norm_fresh_cow_disposal is not none else 10.0 }}" required></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-warning fw-bold" name="warn_fresh_cow_disposal" value="{{ settings.warn_fresh_cow_disposal if settings.warn_fresh_cow_disposal is not none else 14.0 }}" required></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-danger fw-bold" name="crit_fresh_cow_disposal" value="{{ settings.crit_fresh_cow_disposal if settings.crit_fresh_cow_disposal is not none else 18.0 }}" required></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Макс. выбраковка первотёлок (1-я лактация)</strong></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-success fw-bold" name="norm_first_lactation_culling" value="{{ settings.norm_first_lactation_culling if settings.norm_first_lactation_culling is not none else 20.0 }}" required></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-warning fw-bold" name="warn_first_lactation_culling" value="{{ settings.warn_first_lactation_culling if settings.warn_first_lactation_culling is not none else 25.0 }}" required></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-danger fw-bold" name="crit_first_lactation_culling" value="{{ settings.crit_first_lactation_culling if settings.crit_first_lactation_culling is not none else 30.0 }}" required></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Доля падежа (летальность в структуре выбытия)</strong></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-success fw-bold" name="norm_mortality_rate" value="{{ settings.norm_mortality_rate if settings.norm_mortality_rate is not none else 25.0 }}" required></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-warning fw-bold" name="warn_mortality_rate" value="{{ settings.warn_mortality_rate if settings.warn_mortality_rate is not none else 35.0 }}" required></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-danger fw-bold" name="crit_mortality_rate" value="{{ settings.crit_mortality_rate if settings.crit_mortality_rate is not none else 45.0 }}" required></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Ортопедические патологии (болезни копыт)</strong></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-success fw-bold" name="norm_locomotor_disorders" value="{{ settings.norm_locomotor_disorders if settings.norm_locomotor_disorders is not none else 15.0 }}" required></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-warning fw-bold" name="warn_locomotor_disorders" value="{{ settings.warn_locomotor_disorders if settings.warn_locomotor_disorders is not none else 20.0 }}" required></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-danger fw-bold" name="crit_locomotor_disorders" value="{{ settings.crit_locomotor_disorders if settings.crit_locomotor_disorders is not none else 25.0 }}" required></td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Заболевания вымени (маститы)</strong></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-success fw-bold" name="norm_mastitis_disorders" value="{{ settings.norm_mastitis_disorders if settings.norm_mastitis_disorders is not none else 15.0 }}" required></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-warning fw-bold" name="warn_mastitis_disorders" value="{{ settings.warn_mastitis_disorders if settings.warn_mastitis_disorders is not none else 20.0 }}" required></td>
+                                        <td><input type="number" step="0.01" min="0" max="100" class="form-control form-control-sm text-center text-danger fw-bold" name="crit_mastitis_disorders" value="{{ settings.crit_mastitis_disorders if settings.crit_mastitis_disorders is not none else 25.0 }}" required></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2 и 3. Реквизиты организации и зоотехнические коэффициенты / алерты -->
+        <div class="row g-4 mb-4">
+            <div class="col-lg-5">
+                <div class="card shadow-sm border-0 rounded-4 overflow-hidden h-100">
+                    <div class="card-header bg-dark text-white py-3 px-4 d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-building me-2 text-warning"></i> 2. Реквизиты организации (Акты и AITS)</h5>
+                    </div>
+                    <div class="card-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Наименование сельхозорганизации</label>
+                            <input type="text" class="form-control" name="farm_org_name" maxlength="160" value="{{ settings.farm_org_name }}" required>
+                            <small class="text-muted">Отображается в интерфейсе, печатных формах 209/210-АПК и реестрах AITS.</small>
+                        </div>
+                        <div class="mb-0">
+                            <label class="form-label small fw-bold">УНП владельца (для ГИС «AITS»)</label>
+                            <input type="text" class="form-control font-monospace" name="farm_unp" maxlength="32" value="{{ settings.farm_unp }}" required>
+                            <small class="text-muted">9-значный учётный номер плательщика в XML/CSV реестре AITS.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-7">
+                <div class="card shadow-sm border-0 rounded-4 overflow-hidden h-100">
+                    <div class="card-header bg-dark text-white py-3 px-4 d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0 fw-bold"><i class="bi bi-cpu text-info me-2"></i> 3. Зоотехнические коэффициенты, матрица и алерты</h5>
+                    </div>
+                    <div class="card-body p-4">
+                        <div class="row g-3">
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Лидер стада (кг/лакт.)</label>
+                                <input type="number" step="100" min="1000" class="form-control form-control-sm" name="high_yield_threshold_kg" value="{{ settings.high_yield_threshold_kg }}" required>
+                                <small class="text-muted">Порог высокопродуктивных коров</small>
+                            </div>
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Матрица: Внимание (%)</label>
+                                <input type="number" step="0.5" min="0" max="100" class="form-control form-control-sm" name="matrix_warn_pct" id="matrix_warn_pct" value="{{ settings.matrix_warn_pct }}" required>
+                                <small class="text-muted">Жёлтая зона матрицы ферм</small>
+                            </div>
+                            <div class="col-md-4 col-sm-6">
+                                <label class="form-label small fw-semibold">Матрица: Критично (%)</label>
+                                <input type="number" step="0.5" min="0" max="100" class="form-control form-control-sm" name="matrix_crit_pct" id="matrix_crit_pct" value="{{ settings.matrix_crit_pct }}" required>
+                                <small class="text-muted">Красная зона матрицы ферм</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold">Коэфф. тревоги роста падежа (x)</label>
+                                <input type="number" step="0.05" min="1" class="form-control form-control-sm" name="alert_death_growth_ratio" value="{{ settings.alert_death_growth_ratio }}" required>
+                                <small class="text-muted">Напр. 1.40 = срабатывает при росте на +40%</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold">Мин. случаев для кластера диагноза</label>
+                                <input type="number" step="1" min="2" class="form-control form-control-sm" name="alert_cluster_min_count" value="{{ settings.alert_cluster_min_count }}" required>
+                                <small class="text-muted">Порог вспышки одинаковых диагнозов за 14 дн.</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex justify-content-end mb-4">
+            <button type="submit" class="btn btn-success btn-lg px-5 fw-bold shadow">
+                <i class="bi bi-check-circle-fill me-2"></i> Сохранить все нормативы, пороги и настройки
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form[action="/settings"]');
+    const alertBox = document.getElementById('settingsValidationAlert');
+    if (!form || !alertBox) return;
+
+    const triples = [
+        ['Выбытие новотельных (0–30 DIM)', 'norm_fresh_cow_disposal', 'warn_fresh_cow_disposal', 'crit_fresh_cow_disposal'],
+        ['Выбраковка первотёлок', 'norm_first_lactation_culling', 'warn_first_lactation_culling', 'crit_first_lactation_culling'],
+        ['Доля падежа (летальность)', 'norm_mortality_rate', 'warn_mortality_rate', 'crit_mortality_rate'],
+        ['Ортопедические патологии', 'norm_locomotor_disorders', 'warn_locomotor_disorders', 'crit_locomotor_disorders'],
+        ['Заболевания вымени', 'norm_mastitis_disorders', 'warn_mastitis_disorders', 'crit_mastitis_disorders']
+    ];
+
+    form.addEventListener('submit', function(e) {
+        alertBox.classList.add('d-none');
+        for (const [label, kn, kw, kc] of triples) {
+            const vn = parseFloat(form.querySelector(`[name="${kn}"]`)?.value);
+            const vw = parseFloat(form.querySelector(`[name="${kw}"]`)?.value);
+            const vc = parseFloat(form.querySelector(`[name="${kc}"]`)?.value);
+            if (!(vn <= vw && vw <= vc)) {
+                e.preventDefault();
+                alertBox.textContent = `Ошибка порогов «${label}»: должно выполняться Норма ≤ Внимание ≤ Критично (${vn} ≤ ${vw} ≤ ${vc}).`;
+                alertBox.classList.remove('d-none');
+                alertBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+        }
+        const mw = parseFloat(document.getElementById('matrix_warn_pct')?.value);
+        const mc = parseFloat(document.getElementById('matrix_crit_pct')?.value);
+        if (mw > mc) {
+            e.preventDefault();
+            alertBox.textContent = `Порог внимания матрицы (${mw}%) не может превышать критический (${mc}%).`;
+            alertBox.classList.remove('d-none');
+            alertBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    });
+});
+</script>
+{% endblock %}
