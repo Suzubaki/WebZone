@@ -2,7 +2,7 @@
 import time
 from functools import wraps
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
-from database import get_db_connection, log_audit_event
+from database import log_audit_event, run_write_transaction
 from auth import (
     authenticate_user, register_user, get_user_by_id,
     get_all_users, update_user
@@ -246,25 +246,34 @@ def delete_user(user_id):
         flash('Вы не можете удалить свою собственную учетную запись', 'danger')
         return redirect(url_for('auth.user_management'))
 
-    user = get_user_by_id(user_id)
-    if user:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
-        conn.commit()
-        conn.close()
+    actor_username = session.get('username')
+    actor_id = session.get('user_id')
+    client_ip = request.remote_addr
 
+    def _tx_del_user(conn, cursor):
+        cursor.execute('SELECT id, username, user_type FROM users WHERE id = ?', (user_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        target_username = row['username']
+        target_type = row['user_type']
+        cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
         log_audit_event(
-            username=session.get('username'),
+            username=actor_username,
             farm_name='Admin',
             action='DELETE_USER',
             entity_type='USER',
             entity_id=user_id,
-            details=f"Удален пользователь {user.username} ({user.user_type}). Записи выбытия скота сохранены.",
-            user_id=session.get('user_id'),
-            ip_address=request.remote_addr
+            details=f"Удален пользователь {target_username} ({target_type}). Записи выбытия скота сохранены.",
+            user_id=actor_id,
+            ip_address=client_ip,
+            cursor=cursor
         )
-        flash(f'Пользователь {user.username} успешно удален (исторические записи фермы сохранены)', 'success')
+        return target_username
+
+    deleted_username = run_write_transaction(_tx_del_user)
+    if deleted_username:
+        flash(f'Пользователь {deleted_username} успешно удален (исторические записи фермы сохранены)', 'success')
     else:
         flash('Пользователь не найден', 'danger')
 

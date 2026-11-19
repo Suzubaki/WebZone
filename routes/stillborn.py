@@ -10,7 +10,7 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 from config import Config
-from database import get_db_connection, log_audit_event, get_setting
+from database import get_db_connection, log_audit_event, run_write_transaction, get_setting
 from domain import normalize_date, validate_stillborn_payload
 from cow_queries import insert_stillborn_record
 from .auth import login_required
@@ -153,24 +153,22 @@ def add_stillborn():
                                    mother_conditions=Config.MOTHER_CONDITIONS,
                                    mother_groups=Config.MOTHER_GROUPS)
 
-        conn = get_db_connection()
-        try:
-            cursor = conn.cursor()
+        def _tx_add_sb(_conn, cursor):
             new_id, record_code = insert_stillborn_record(cursor, farm_name, session.get('user_id'), cleaned)
-            conn.commit()
-        finally:
-            conn.close()
+            log_audit_event(
+                username=session.get('username'),
+                farm_name=farm_name,
+                action='CREATE',
+                entity_type='STILLBIRTH',
+                entity_id=new_id,
+                details=f"Зарегистрировано {cleaned['event_type']} № {record_code} (Мать: {cleaned['mother_tag'] or 'нет'}), причина: {cleaned['cause']}",
+                user_id=session.get('user_id'),
+                ip_address=request.remote_addr,
+                cursor=cursor
+            )
+            return record_code
 
-        log_audit_event(
-            username=session.get('username'),
-            farm_name=farm_name,
-            action='CREATE',
-            entity_type='STILLBIRTH',
-            entity_id=new_id,
-            details=f"Зарегистрировано {cleaned['event_type']} № {record_code} (Мать: {cleaned['mother_tag'] or 'нет'}), причина: {cleaned['cause']}",
-            user_id=session.get('user_id'),
-            ip_address=request.remote_addr
-        )
+        record_code = run_write_transaction(_tx_add_sb)
 
         flash(f'Акт мертворождения успешно зарегистрирован под номером {record_code}', 'success')
         return redirect(url_for('stillborn.stillborn_list'))
@@ -232,41 +230,44 @@ def edit_stillborn(record_id):
                                    mother_conditions=Config.MOTHER_CONDITIONS,
                                    mother_groups=Config.MOTHER_GROUPS)
 
-        cursor.execute('''
-            UPDATE stillbirth_records SET
-                event_date = ?,
-                mother_tag = ?,
-                mother_group = ?,
-                event_type = ?,
-                fetus_sex = ?,
-                fetus_weight = ?,
-                gestation_days = ?,
-                cause = ?,
-                mother_condition = ?,
-                attendant = ?,
-                notes = ?,
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE id = ?
-        ''', (
-            cleaned['event_date'], cleaned['mother_tag'], cleaned['mother_group'],
-            cleaned['event_type'], cleaned['fetus_sex'], cleaned['fetus_weight'],
-            cleaned['gestation_days'], cleaned['cause'], cleaned['mother_condition'],
-            cleaned['attendant'], cleaned['notes'], session.get('user_id'), record_id
-        ))
-        conn.commit()
         conn.close()
 
-        log_audit_event(
-            username=session.get('username'),
-            farm_name=record['farm_name'],
-            action='UPDATE',
-            entity_type='STILLBIRTH',
-            entity_id=record_id,
-            details=f"Отредактирован акт мертворождения {record['record_code']}. Новая причина: {cleaned['cause']}",
-            user_id=session.get('user_id'),
-            ip_address=request.remote_addr
-        )
+        def _tx_edit_sb(_conn, tx_cursor):
+            tx_cursor.execute('''
+                UPDATE stillbirth_records SET
+                    event_date = ?,
+                    mother_tag = ?,
+                    mother_group = ?,
+                    event_type = ?,
+                    fetus_sex = ?,
+                    fetus_weight = ?,
+                    gestation_days = ?,
+                    cause = ?,
+                    mother_condition = ?,
+                    attendant = ?,
+                    notes = ?,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = ?
+                WHERE id = ?
+            ''', (
+                cleaned['event_date'], cleaned['mother_tag'], cleaned['mother_group'],
+                cleaned['event_type'], cleaned['fetus_sex'], cleaned['fetus_weight'],
+                cleaned['gestation_days'], cleaned['cause'], cleaned['mother_condition'],
+                cleaned['attendant'], cleaned['notes'], session.get('user_id'), record_id
+            ))
+            log_audit_event(
+                username=session.get('username'),
+                farm_name=record['farm_name'],
+                action='UPDATE',
+                entity_type='STILLBIRTH',
+                entity_id=record_id,
+                details=f"Отредактирован акт мертворождения {record['record_code']}. Новая причина: {cleaned['cause']}",
+                user_id=session.get('user_id'),
+                ip_address=request.remote_addr,
+                cursor=tx_cursor
+            )
+
+        run_write_transaction(_tx_edit_sb)
 
         flash(f'Акт {record["record_code"]} успешно сохранён', 'success')
         return redirect(url_for('stillborn.stillborn_list'))
@@ -291,36 +292,35 @@ def delete_stillborn(record_id):
     user_type = session.get('user_type')
     farm_name = session.get('farm_name')
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    if user_type == 'admin':
-        cursor.execute('SELECT * FROM stillbirth_records WHERE id = ?', (record_id,))
-    else:
-        cursor.execute('SELECT * FROM stillbirth_records WHERE id = ? AND farm_name = ?', (record_id, farm_name))
-        
-    record = cursor.fetchone()
-    if not record:
-        conn.close()
+    def _tx_delete_sb(_conn, cursor):
+        if user_type == 'admin':
+            cursor.execute('SELECT * FROM stillbirth_records WHERE id = ?', (record_id,))
+        else:
+            cursor.execute('SELECT * FROM stillbirth_records WHERE id = ? AND farm_name = ?', (record_id, farm_name))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        rec = dict(row)
+        cursor.execute('DELETE FROM stillbirth_records WHERE id = ?', (record_id,))
+        log_audit_event(
+            username=session.get('username'),
+            farm_name=rec['farm_name'],
+            action='DELETE',
+            entity_type='STILLBIRTH',
+            entity_id=record_id,
+            details=f"Удалён акт мертворождения {rec['record_code']} (Мать: {rec['mother_tag'] or 'нет'})",
+            user_id=session.get('user_id'),
+            ip_address=request.remote_addr,
+            cursor=cursor
+        )
+        return rec
+
+    rec = run_write_transaction(_tx_delete_sb)
+    if not rec:
         flash('Запись не найдена или нет прав на удаление', 'danger')
         return redirect(url_for('stillborn.stillborn_list'))
-        
-    cursor.execute('DELETE FROM stillbirth_records WHERE id = ?', (record_id,))
-    conn.commit()
-    conn.close()
-    
-    log_audit_event(
-        username=session.get('username'),
-        farm_name=record['farm_name'],
-        action='DELETE',
-        entity_type='STILLBIRTH',
-        entity_id=record_id,
-        details=f"Удалён акт мертворождения {record['record_code']} (Мать: {record['mother_tag'] or 'нет'})",
-        user_id=session.get('user_id'),
-        ip_address=request.remote_addr
-    )
-    
-    flash(f'Акт {record["record_code"]} удалён', 'info')
+
+    flash(f'Акт {rec["record_code"]} удалён', 'info')
     return redirect(url_for('stillborn.stillborn_list'))
 
 @stillborn_bp.route('/export_stillborn_excel')

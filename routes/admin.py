@@ -5,7 +5,7 @@ from flask import (
     url_for, flash, session, send_file, jsonify
 )
 from config import Config
-from database import get_db_connection, log_audit_event, get_all_settings, invalidate_settings_cache
+from database import get_db_connection, log_audit_event, get_all_settings, invalidate_settings_cache, run_write_transaction
 from backup import create_db_backup_bytes, restore_db_from_upload
 from .auth import login_required, admin_required
 
@@ -15,62 +15,64 @@ admin_bp = Blueprint('admin', __name__)
 @admin_required
 def manage_reasons():
     """Управление справочником причин выбытия скота (для администратора)"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
     if request.method == 'POST':
         category = request.form.get('category')
         name = request.form.get('name', '').strip()
-        
+
         if category and name:
-            cursor.execute('INSERT OR IGNORE INTO disposal_reasons (category, name, is_active) VALUES (?, ?, 1)', (category, name))
-            conn.commit()
-            
-            log_audit_event(
-                username=session.get('username'),
-                farm_name='Admin',
-                action='CREATE_REASON',
-                entity_type='REASON',
-                details=f"Добавлена новая причина '{name}' в категорию '{category}'",
-                user_id=session.get('user_id'),
-                ip_address=request.remote_addr
-            )
+            def _tx_add_reason(_conn, cursor):
+                cursor.execute('INSERT OR IGNORE INTO disposal_reasons (category, name, is_active) VALUES (?, ?, 1)', (category, name))
+                log_audit_event(
+                    username=session.get('username'),
+                    farm_name='Admin',
+                    action='CREATE_REASON',
+                    entity_type='REASON',
+                    details=f"Добавлена новая причина '{name}' в категорию '{category}'",
+                    user_id=session.get('user_id'),
+                    ip_address=request.remote_addr,
+                    cursor=cursor
+                )
+            run_write_transaction(_tx_add_reason)
             flash(f"Причина '{name}' успешно добавлена в справочник", 'success')
-            
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
     cursor.execute('SELECT * FROM disposal_reasons ORDER BY category, name')
     reasons = [dict(r) for r in cursor.fetchall()]
     conn.close()
-    
+
     return render_template('manage_reasons.html', reasons=reasons)
 
 @admin_bp.route('/reasons/toggle/<int:reason_id>', methods=['POST'])
 @admin_required
 def toggle_reason(reason_id):
     """Переключение активности причины выбытия"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM disposal_reasons WHERE id = ?', (reason_id,))
-    reason = cursor.fetchone()
-    if reason:
+    def _tx_toggle(_conn, cursor):
+        cursor.execute('SELECT * FROM disposal_reasons WHERE id = ?', (reason_id,))
+        reason = cursor.fetchone()
+        if not reason:
+            return None
         new_status = 0 if reason['is_active'] == 1 else 1
         cursor.execute('UPDATE disposal_reasons SET is_active = ? WHERE id = ?', (new_status, reason_id))
-        conn.commit()
+        return reason['name'], new_status
+
+    res = run_write_transaction(_tx_toggle)
+    if res:
+        name, new_status = res
         status_text = 'активирована' if new_status == 1 else 'скрыта'
-        flash(f"Причина '{reason['name']}' {status_text}", 'info')
-    conn.close()
+        flash(f"Причина '{name}' {status_text}", 'info')
     return redirect(url_for('admin.manage_reasons'))
 
 @admin_bp.route('/reasons/delete/<int:reason_id>', methods=['POST'])
 @admin_required
 def delete_reason(reason_id):
     """Удаление причины выбытия из справочника"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM disposal_reasons WHERE id = ?', (reason_id,))
-    reason = cursor.fetchone()
-    if reason:
+    def _tx_del_reason(_conn, cursor):
+        cursor.execute('SELECT * FROM disposal_reasons WHERE id = ?', (reason_id,))
+        reason = cursor.fetchone()
+        if not reason:
+            return None
         cursor.execute('DELETE FROM disposal_reasons WHERE id = ?', (reason_id,))
-        conn.commit()
         log_audit_event(
             username=session.get('username'),
             farm_name='Admin',
@@ -78,10 +80,14 @@ def delete_reason(reason_id):
             entity_type='REASON',
             details=f"Удалена причина '{reason['name']}' из категории '{reason['category']}'",
             user_id=session.get('user_id'),
-            ip_address=request.remote_addr
+            ip_address=request.remote_addr,
+            cursor=cursor
         )
-        flash(f"Причина '{reason['name']}' удалена из справочника", 'success')
-    conn.close()
+        return reason['name']
+
+    deleted_name = run_write_transaction(_tx_del_reason)
+    if deleted_name:
+        flash(f"Причина '{deleted_name}' удалена из справочника", 'success')
     return redirect(url_for('admin.manage_reasons'))
 
 @admin_bp.route('/audit_log')
@@ -277,29 +283,25 @@ def settings():
             flash(msg, 'danger')
             return redirect(url_for('admin.settings'))
 
-        conn = get_db_connection()
-        try:
-            cursor = conn.cursor()
+        def _tx_save_settings(_conn, cursor):
             for k, v in parsed_updates.items():
                 cursor.execute('''
                     INSERT INTO system_settings (key, value) VALUES (?, ?)
                     ON CONFLICT(key) DO UPDATE SET value = excluded.value
                 ''', (k, v))
-            conn.commit()
-        finally:
-            conn.close()
+            log_audit_event(
+                username=session.get('username'),
+                farm_name='Admin',
+                action='UPDATE_SETTINGS',
+                entity_type='SETTINGS',
+                details=f"Обновлены зоотехнические нормативы и настройки ({len(parsed_updates)} параметров)",
+                user_id=session.get('user_id'),
+                ip_address=request.remote_addr,
+                cursor=cursor
+            )
 
+        run_write_transaction(_tx_save_settings)
         invalidate_settings_cache()
-
-        log_audit_event(
-            username=session.get('username'),
-            farm_name='Admin',
-            action='UPDATE_SETTINGS',
-            entity_type='SETTINGS',
-            details=f"Обновлены зоотехнические нормативы и настройки ({len(parsed_updates)} параметров)",
-            user_id=session.get('user_id'),
-            ip_address=request.remote_addr
-        )
 
         if is_ajax:
             return jsonify({'status': 'success', 'message': 'Нормативы, пороги тревог и параметры успешно сохранены!', 'updated': parsed_updates})

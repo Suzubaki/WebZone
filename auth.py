@@ -1,6 +1,6 @@
 # auth.py - Аутентификация и управление пользователями
 import sqlite3
-from database import get_db_connection
+from database import get_db_connection, run_write_transaction
 from models import User
 
 
@@ -65,10 +65,7 @@ def register_user(username, password, user_type, farm_name=None, must_change_pas
     if user_type == 'farm' and not (farm_name or '').strip():
         return False, 'Для учётной записи фермы обязательно указать название подразделения'
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
+    def _tx_register(_conn, cursor):
         cursor.execute('SELECT id FROM users WHERE username = ?', (username,))
         if cursor.fetchone():
             return False, 'Пользователь с таким именем уже существует'
@@ -80,14 +77,12 @@ def register_user(username, password, user_type, farm_name=None, must_change_pas
             INSERT INTO users (username, password_hash, user_type, farm_name, must_change_password)
             VALUES (?, ?, ?, ?, ?)
         ''', (username, password_hash, user_type, (farm_name or '').strip() or None, flag))
-
-        conn.commit()
         return True, 'Пользователь успешно зарегистрирован'
 
+    try:
+        return run_write_transaction(_tx_register)
     except sqlite3.Error as e:
         return False, f'Ошибка базы данных: {str(e)}'
-    finally:
-        conn.close()
 
 
 def change_user_password(user_id, new_password):
@@ -95,20 +90,17 @@ def change_user_password(user_id, new_password):
     if not new_password or len(new_password) < 8:
         return False, 'Новый пароль должен содержать не менее 8 символов'
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    password_hash = User.create_password_hash(new_password)
     try:
-        password_hash = User.create_password_hash(new_password)
-        cursor.execute(
-            'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?',
-            (password_hash, user_id)
+        run_write_transaction(
+            lambda _conn, cursor: cursor.execute(
+                'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?',
+                (password_hash, user_id)
+            )
         )
-        conn.commit()
         return True, 'Пароль успешно обновлён'
     except sqlite3.Error as e:
         return False, f'Ошибка базы данных: {str(e)}'
-    finally:
-        conn.close()
 
 
 def get_all_users():
@@ -129,10 +121,7 @@ def update_user(user_id, username, password=None, user_type=None, farm_name=None
     ТОЛЬКО записи, принадлежащие этому пользователю (created_by = user_id),
     чтобы не затрагивать записи других пользователей той же фермы.
     """
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
+    def _tx_update(_conn, cursor):
         cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
         user = cursor.fetchone()
         if not user:
@@ -176,7 +165,6 @@ def update_user(user_id, username, password=None, user_type=None, farm_name=None
         cursor.execute(query, params)
 
         if clean_farm and old_farm_name and clean_farm != old_farm_name:
-            # Перепривязываем только записи, созданные именно этим пользователем
             cursor.execute(
                 'UPDATE cows SET farm_name = ? WHERE created_by = ? AND farm_name = ?',
                 (clean_farm, user_id, old_farm_name)
@@ -190,7 +178,6 @@ def update_user(user_id, username, password=None, user_type=None, farm_name=None
                 (clean_farm, user_id, old_farm_name)
             )
 
-            # Переносим счётчик только если старое название фермы больше никем не используется
             cursor.execute('SELECT COUNT(*) as cnt FROM users WHERE farm_name = ? AND id != ?', (old_farm_name, user_id))
             other_users_cnt = cursor.fetchone()['cnt']
             cursor.execute('SELECT COUNT(*) as cnt FROM cows WHERE farm_name = ?', (old_farm_name,))
@@ -218,25 +205,20 @@ def update_user(user_id, username, password=None, user_type=None, farm_name=None
             cursor.execute('UPDATE cows SET farm_name = ? WHERE created_by = ? AND (farm_name IS NULL OR farm_name = "")', (clean_farm, user_id))
             cursor.execute('UPDATE stillbirth_records SET farm_name = ? WHERE created_by = ? AND (farm_name IS NULL OR farm_name = "")', (clean_farm, user_id))
 
-        conn.commit()
         return True, 'Данные пользователя и связанные записи успешно обновлены'
 
+    try:
+        return run_write_transaction(_tx_update)
     except sqlite3.Error as e:
         return False, f'Ошибка базы данных: {str(e)}'
-    finally:
-        conn.close()
 
 
 def delete_user(user_id):
     """Удаление пользователя."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
     try:
-        cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
-        conn.commit()
+        run_write_transaction(
+            lambda _conn, cursor: cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
+        )
         return True, 'Пользователь успешно удален'
     except sqlite3.Error as e:
         return False, f'Ошибка базы данных: {str(e)}'
-    finally:
-        conn.close()

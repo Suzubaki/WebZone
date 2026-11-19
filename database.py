@@ -1,6 +1,7 @@
 # database.py - Работа с базой данных SQLite
 import logging
 import os
+import random
 import sqlite3
 import threading
 import time
@@ -16,6 +17,8 @@ if not logger.handlers:
 
 _indexes_checked = False
 _wal_checked_for_db = None
+_init_lock = threading.Lock()
+_write_lock = threading.RLock()
 _settings_cache = {}
 _settings_cache_db = None
 _settings_lock = threading.Lock()
@@ -79,29 +82,86 @@ def _sqlite_lower(val):
     return str(val).lower()
 
 
-def get_db_connection():
+def get_db_connection(isolation_level=''):
     """Создает оптимизированное соединение с базой данных SQLite с поддержкой WAL-режима."""
     global _indexes_checked, _wal_checked_for_db
-    conn = sqlite3.connect(Config.DATABASE, timeout=10.0)
+    conn = sqlite3.connect(Config.DATABASE, timeout=15.0, isolation_level=isolation_level)
     conn.row_factory = sqlite3.Row
     conn.create_function("LOWER", 1, _sqlite_lower)
 
+    with _init_lock:
+        need_wal = (_wal_checked_for_db != Config.DATABASE)
+        need_indexes = not _indexes_checked
+
     cursor = conn.cursor()
-    if _wal_checked_for_db != Config.DATABASE:
-        cursor.execute('PRAGMA journal_mode=WAL;')
-        _wal_checked_for_db = Config.DATABASE
-        _indexes_checked = False
+    if need_wal:
+        with _init_lock:
+            if _wal_checked_for_db != Config.DATABASE:
+                cursor.execute('PRAGMA journal_mode=WAL;')
+                cursor.execute('PRAGMA wal_autocheckpoint=1000;')
+                _wal_checked_for_db = Config.DATABASE
+                _indexes_checked = False
+                need_indexes = True
     cursor.execute('PRAGMA synchronous=NORMAL;')
     cursor.execute('PRAGMA temp_store=MEMORY;')
     cursor.execute('PRAGMA cache_size=-10000;')
-    cursor.execute('PRAGMA busy_timeout=5000;')
+    cursor.execute('PRAGMA busy_timeout=10000;')
     cursor.close()
 
-    if not _indexes_checked:
-        _indexes_checked = True
-        _ensure_indexes(conn)
+    if need_indexes:
+        with _init_lock:
+            if not _indexes_checked:
+                _ensure_indexes(conn)
+                _indexes_checked = True
 
     return conn
+
+
+def _is_sqlite_lock_error(exc):
+    msg = str(exc).lower()
+    return 'locked' in msg or 'busy' in msg
+
+
+def run_write_transaction(fn, max_attempts=8, base_delay=0.025):
+    """
+    Выполняет пишущую транзакцию SQLite строго через BEGIN IMMEDIATE
+    с внутрипроцессной сериализацией и повторными попытками при блокировке.
+    Устраняет deadlock повышения блокировки (read -> write) при одновременных запросах.
+    """
+    last_err = None
+    for attempt in range(max_attempts):
+        with _write_lock:
+            conn = get_db_connection(isolation_level=None)
+            cursor = conn.cursor()
+            try:
+                cursor.execute('BEGIN IMMEDIATE')
+                result = fn(conn, cursor)
+                cursor.execute('COMMIT')
+                return result
+            except sqlite3.OperationalError as exc:
+                try:
+                    cursor.execute('ROLLBACK')
+                except Exception:
+                    pass
+                if not _is_sqlite_lock_error(exc):
+                    raise
+                last_err = exc
+            except Exception:
+                try:
+                    cursor.execute('ROLLBACK')
+                except Exception:
+                    pass
+                raise
+            finally:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+                conn.close()
+        time.sleep(base_delay * (2 ** min(attempt, 4)) + random.uniform(0.0, 0.02))
+
+    logger.error("Превышено число попыток записи в SQLite (%s): %s", max_attempts, last_err)
+    raise sqlite3.OperationalError(f"База данных занята после {max_attempts} попыток: {last_err}")
 
 
 def optimize_database_indexes():
@@ -475,39 +535,46 @@ def get_setting(key, default=None):
 
 
 def set_setting(key, value, description=None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    if description:
-        cursor.execute('''
-            INSERT INTO system_settings (key, value, description) VALUES (?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, description = excluded.description
-        ''', (key, str(value), description))
-    else:
-        cursor.execute('''
-            INSERT INTO system_settings (key, value) VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        ''', (key, str(value)))
-    conn.commit()
-    conn.close()
+    def _op(conn, cursor):
+        if description:
+            cursor.execute('''
+                INSERT INTO system_settings (key, value, description) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, description = excluded.description
+            ''', (key, str(value), description))
+        else:
+            cursor.execute('''
+                INSERT INTO system_settings (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            ''', (key, str(value)))
+
+    run_write_transaction(_op)
     invalidate_settings_cache()
 
 
-def log_audit_event(username, farm_name, action, entity_type, entity_id=None, details=None, user_id=None, ip_address=None):
-    """Запись события в журнал аудита с надёжным логированием сбоев."""
-    conn = None
+def log_audit_event(username, farm_name, action, entity_type, entity_id=None, details=None, user_id=None, ip_address=None, cursor=None):
+    """Запись события в журнал аудита (в рамках текущей транзакции или в отдельной защищённой транзакции)."""
+    params = (
+        user_id,
+        username or 'System',
+        farm_name,
+        action,
+        entity_type,
+        str(entity_id) if entity_id else None,
+        details,
+        ip_address,
+    )
+    sql = '''
+        INSERT INTO audit_logs (user_id, username, farm_name, action, entity_type, entity_id, details, ip_address)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    '''
+    if cursor is not None:
+        cursor.execute(sql, params)
+        return
+
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO audit_logs (user_id, username, farm_name, action, entity_type, entity_id, details, ip_address)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (user_id, username or 'System', farm_name, action, entity_type, str(entity_id) if entity_id else None, details, ip_address))
-        conn.commit()
+        run_write_transaction(lambda _conn, cur: cur.execute(sql, params))
     except Exception:
         logger.exception("Ошибка записи события аудита action=%s entity=%s", action, entity_type)
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def _max_suffix_from_rows(rows, col_name, separator):
@@ -555,35 +622,21 @@ def _next_counter_value(cursor, farm_name, counter_col, table_name, code_col, pr
 def generate_cow_id(farm_name, conn=None):
     """
     Атомарно генерирует следующий уникальный номер выбытия 'FarmName-XXX'
-    с повторами при временной блокировке SQLite (без коллизионного timestamp fallback).
+    через BEGIN IMMEDIATE и повторы при временной блокировке SQLite.
     """
     if conn is not None:
         cursor = conn.cursor()
         new_number = _next_counter_value(cursor, farm_name, 'last_cow_number', 'cows', 'cow_id', '-')
         return f"{farm_name}-{new_number:03d}"
 
-    last_err = None
-    for attempt in range(5):
-        local_conn = get_db_connection()
-        try:
-            cursor = local_conn.cursor()
-            cursor.execute("BEGIN IMMEDIATE")
-            new_number = _next_counter_value(cursor, farm_name, 'last_cow_number', 'cows', 'cow_id', '-')
-            local_conn.commit()
-            return f"{farm_name}-{new_number:03d}"
-        except sqlite3.OperationalError as exc:
-            local_conn.rollback()
-            last_err = exc
-            time.sleep(0.02 * (attempt + 1))
-        except Exception as exc:
-            local_conn.rollback()
-            logger.exception("Критическая ошибка генерации cow_id для фермы %s", farm_name)
-            raise RuntimeError(f"Не удалось сгенерировать уникальный номер выбытия: {exc}") from exc
-        finally:
-            local_conn.close()
-
-    logger.error("Превышено число попыток генерации cow_id для %s: %s", farm_name, last_err)
-    raise RuntimeError(f"База данных занята при генерации номера выбытия: {last_err}")
+    try:
+        new_number = run_write_transaction(
+            lambda _conn, cursor: _next_counter_value(cursor, farm_name, 'last_cow_number', 'cows', 'cow_id', '-')
+        )
+        return f"{farm_name}-{new_number:03d}"
+    except Exception as exc:
+        logger.exception("Ошибка генерации cow_id для фермы %s", farm_name)
+        raise RuntimeError(f"База данных занята при генерации номера выбытия: {exc}") from exc
 
 
 def get_reasons_for_category(category, include_inactive=False):
@@ -605,32 +658,18 @@ def get_reasons_for_category(category, include_inactive=False):
 def generate_stillborn_code(farm_name, conn=None):
     """
     Атомарно генерирует следующий уникальный номер акта мертворождения 'FarmName-МXXX'
-    с повторами при блокировке SQLite (без коллизионного timestamp fallback).
+    через BEGIN IMMEDIATE и повторы при временной блокировке SQLite.
     """
     if conn is not None:
         cursor = conn.cursor()
         new_number = _next_counter_value(cursor, farm_name, 'last_stillborn_number', 'stillbirth_records', 'record_code', '-')
         return f"{farm_name}-М{new_number:03d}"
 
-    last_err = None
-    for attempt in range(5):
-        local_conn = get_db_connection()
-        try:
-            cursor = local_conn.cursor()
-            cursor.execute("BEGIN IMMEDIATE")
-            new_number = _next_counter_value(cursor, farm_name, 'last_stillborn_number', 'stillbirth_records', 'record_code', '-')
-            local_conn.commit()
-            return f"{farm_name}-М{new_number:03d}"
-        except sqlite3.OperationalError as exc:
-            local_conn.rollback()
-            last_err = exc
-            time.sleep(0.02 * (attempt + 1))
-        except Exception as exc:
-            local_conn.rollback()
-            logger.exception("Критическая ошибка генерации кода мертворождения для фермы %s", farm_name)
-            raise RuntimeError(f"Не удалось сгенерировать номер акта мертворождения: {exc}") from exc
-        finally:
-            local_conn.close()
-
-    logger.error("Превышено число попыток генерации кода мертворождения для %s: %s", farm_name, last_err)
-    raise RuntimeError(f"База данных занята при генерации номера акта: {last_err}")
+    try:
+        new_number = run_write_transaction(
+            lambda _conn, cursor: _next_counter_value(cursor, farm_name, 'last_stillborn_number', 'stillbirth_records', 'record_code', '-')
+        )
+        return f"{farm_name}-М{new_number:03d}"
+    except Exception as exc:
+        logger.exception("Ошибка генерации кода мертворождения для фермы %s", farm_name)
+        raise RuntimeError(f"База данных занята при генерации номера акта: {exc}") from exc

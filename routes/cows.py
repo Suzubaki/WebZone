@@ -10,7 +10,7 @@ from flask import (
 import openpyxl
 
 from config import Config
-from database import get_db_connection, log_audit_event
+from database import get_db_connection, log_audit_event, run_write_transaction
 from domain import (
     compute_lactation_phase,
     normalize_date,
@@ -171,24 +171,22 @@ def add_cow():
                 flash(' '.join(errors_sb), 'danger')
                 return _render_add(request.form)
 
-            conn = get_db_connection()
-            try:
-                cursor = conn.cursor()
+            def _tx_add_sb(_conn, cursor):
                 new_id, sb_code = insert_stillborn_record(cursor, farm_name, session.get('user_id'), cleaned_sb)
-                conn.commit()
-            finally:
-                conn.close()
+                log_audit_event(
+                    username=session.get('username'),
+                    farm_name=farm_name,
+                    action='CREATE',
+                    entity_type='STILLBORN',
+                    entity_id=new_id,
+                    details=f"Зарегистрирован акт мертворождения {sb_code} (мать: {cleaned_sb['mother_tag'] or '-'}, {cleaned_sb['mother_group']}, пол плода: {cleaned_sb['fetus_sex']})",
+                    user_id=session.get('user_id'),
+                    ip_address=request.remote_addr,
+                    cursor=cursor
+                )
+                return sb_code
 
-            log_audit_event(
-                username=session.get('username'),
-                farm_name=farm_name,
-                action='CREATE',
-                entity_type='STILLBORN',
-                entity_id=new_id,
-                details=f"Зарегистрирован акт мертворождения {sb_code} (мать: {cleaned_sb['mother_tag'] or '-'}, {cleaned_sb['mother_group']}, пол плода: {cleaned_sb['fetus_sex']})",
-                user_id=session.get('user_id'),
-                ip_address=request.remote_addr
-            )
+            sb_code = run_write_transaction(_tx_add_sb)
             flash(f'Акт мертворождения успешно зарегистрирован под номером: {sb_code}', 'success')
             return redirect(url_for('stillborn.stillborn_list'))
 
@@ -197,24 +195,22 @@ def add_cow():
             flash(' '.join(errors), 'danger')
             return _render_add(request.form)
 
-        conn = get_db_connection()
-        try:
-            cursor = conn.cursor()
+        def _tx_add_cow(_conn, cursor):
             new_id, cow_id = insert_cow_record(cursor, farm_name, session.get('user_id'), cleaned)
-            conn.commit()
-        finally:
-            conn.close()
+            log_audit_event(
+                username=session.get('username'),
+                farm_name=farm_name,
+                action='CREATE',
+                entity_type='COW',
+                entity_id=new_id,
+                details=f"Добавлена корова {cow_id} (Ушной № {cleaned['ear_tag'] or '-'}), {cleaned['category']}: {cleaned['reason']}, фаза: {cleaned['lactation_phase']}",
+                user_id=session.get('user_id'),
+                ip_address=request.remote_addr,
+                cursor=cursor
+            )
+            return cow_id
 
-        log_audit_event(
-            username=session.get('username'),
-            farm_name=farm_name,
-            action='CREATE',
-            entity_type='COW',
-            entity_id=new_id,
-            details=f"Добавлена корова {cow_id} (Ушной № {cleaned['ear_tag'] or '-'}), {cleaned['category']}: {cleaned['reason']}, фаза: {cleaned['lactation_phase']}",
-            user_id=session.get('user_id'),
-            ip_address=request.remote_addr
-        )
+        cow_id = run_write_transaction(_tx_add_cow)
 
         flash(f'Корова успешно добавлена с системным номером: {cow_id}', 'success')
         return redirect(url_for('cows.view_cows'))
@@ -276,47 +272,50 @@ def edit_cow(cow_id):
                 today=today
             )
 
-        cursor.execute('''
-            UPDATE cows SET
-                category = ?,
-                reason = ?,
-                disposal_date = ?,
-                ear_tag = ?,
-                lactation = ?,
-                lactation_days = ?,
-                lactation_phase = ?,
-                pathology_system = ?,
-                weight = ?,
-                notes = ?,
-                age_group = ?,
-                breed = ?,
-                milk_yield = ?,
-                is_pregnant = ?,
-                gestation_days = ?,
-                is_stillborn = 0,
-                updated_at = CURRENT_TIMESTAMP,
-                updated_by = ?
-            WHERE id = ?
-        ''', (
-            cleaned['category'], cleaned['reason'], cleaned['disposal_date'], cleaned['ear_tag'],
-            cleaned['lactation'], cleaned['lactation_days'], cleaned['lactation_phase'], cleaned['pathology_system'],
-            cleaned['weight'], cleaned['notes'], cleaned['age_group'], cleaned['breed'],
-            cleaned['milk_yield'], cleaned['is_pregnant'],
-            cleaned['gestation_days'], session.get('user_id'), cow_id
-        ))
-        conn.commit()
         conn.close()
 
-        log_audit_event(
-            username=session.get('username'),
-            farm_name=cow['farm_name'],
-            action='UPDATE',
-            entity_type='COW',
-            entity_id=cow_id,
-            details=f"Отредактирована запись {cow['cow_id']}. Новые данные: {cleaned['category']} - {cleaned['reason']}, дата {cleaned['disposal_date']}",
-            user_id=session.get('user_id'),
-            ip_address=request.remote_addr
-        )
+        def _tx_edit(_conn, tx_cursor):
+            tx_cursor.execute('''
+                UPDATE cows SET
+                    category = ?,
+                    reason = ?,
+                    disposal_date = ?,
+                    ear_tag = ?,
+                    lactation = ?,
+                    lactation_days = ?,
+                    lactation_phase = ?,
+                    pathology_system = ?,
+                    weight = ?,
+                    notes = ?,
+                    age_group = ?,
+                    breed = ?,
+                    milk_yield = ?,
+                    is_pregnant = ?,
+                    gestation_days = ?,
+                    is_stillborn = 0,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = ?
+                WHERE id = ?
+            ''', (
+                cleaned['category'], cleaned['reason'], cleaned['disposal_date'], cleaned['ear_tag'],
+                cleaned['lactation'], cleaned['lactation_days'], cleaned['lactation_phase'], cleaned['pathology_system'],
+                cleaned['weight'], cleaned['notes'], cleaned['age_group'], cleaned['breed'],
+                cleaned['milk_yield'], cleaned['is_pregnant'],
+                cleaned['gestation_days'], session.get('user_id'), cow_id
+            ))
+            log_audit_event(
+                username=session.get('username'),
+                farm_name=cow['farm_name'],
+                action='UPDATE',
+                entity_type='COW',
+                entity_id=cow_id,
+                details=f"Отредактирована запись {cow['cow_id']}. Новые данные: {cleaned['category']} - {cleaned['reason']}, дата {cleaned['disposal_date']}",
+                user_id=session.get('user_id'),
+                ip_address=request.remote_addr,
+                cursor=tx_cursor
+            )
+
+        run_write_transaction(_tx_edit)
 
         flash(f'Запись {cow["cow_id"]} успешно обновлена', 'success')
         return redirect(url_for('cows.view_cows'))
@@ -339,37 +338,35 @@ def delete_cow(cow_id):
     user_type = session.get('user_type')
     farm_name = session.get('farm_name')
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    def _tx_delete(_conn, cursor):
+        if user_type == 'admin':
+            cursor.execute('SELECT * FROM cows WHERE id = ?', (cow_id,))
+        else:
+            cursor.execute('SELECT * FROM cows WHERE id = ? AND farm_name = ?', (cow_id, farm_name))
+        cow = cursor.fetchone()
+        if not cow:
+            return None
+        cow_dict = dict(cow)
+        cursor.execute('DELETE FROM cows WHERE id = ?', (cow_id,))
+        log_audit_event(
+            username=session.get('username'),
+            farm_name=cow_dict['farm_name'],
+            action='DELETE',
+            entity_type='COW',
+            entity_id=cow_id,
+            details=f"Удалена запись {cow_dict['cow_id']} ({cow_dict['category']}: {cow_dict['reason']})",
+            user_id=session.get('user_id'),
+            ip_address=request.remote_addr,
+            cursor=cursor
+        )
+        return cow_dict
 
-    if user_type == 'admin':
-        cursor.execute('SELECT * FROM cows WHERE id = ?', (cow_id,))
-    else:
-        cursor.execute('SELECT * FROM cows WHERE id = ? AND farm_name = ?', (cow_id, farm_name))
-
-    cow = cursor.fetchone()
-    if not cow:
-        conn.close()
+    cow_dict = run_write_transaction(_tx_delete)
+    if not cow_dict:
         if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return jsonify({'error': 'Запись не найдена'}), 404
         flash('Запись не найдена', 'danger')
         return redirect(url_for('cows.view_cows'))
-
-    cow_dict = dict(cow)
-    cursor.execute('DELETE FROM cows WHERE id = ?', (cow_id,))
-    conn.commit()
-    conn.close()
-
-    log_audit_event(
-        username=session.get('username'),
-        farm_name=cow_dict['farm_name'],
-        action='DELETE',
-        entity_type='COW',
-        entity_id=cow_id,
-        details=f"Удалена запись {cow_dict['cow_id']} ({cow_dict['category']}: {cow_dict['reason']})",
-        user_id=session.get('user_id'),
-        ip_address=request.remote_addr
-    )
 
     if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return jsonify({'success': True, 'message': 'Запись удалена'})
@@ -398,34 +395,30 @@ def bulk_delete_cows():
     user_type = session.get('user_type')
     farm_name = session.get('farm_name')
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    def _tx_bulk_delete(_conn, cursor):
+        placeholders = ','.join('?' * len(cow_ids))
+        if user_type == 'admin':
+            cursor.execute(f"SELECT id FROM cows WHERE id IN ({placeholders})", cow_ids)
+        else:
+            cursor.execute(f"SELECT id FROM cows WHERE id IN ({placeholders}) AND farm_name = ?", cow_ids + [farm_name])
+        valid_ids = [c['id'] for c in cursor.fetchall()]
+        if valid_ids:
+            del_placeholders = ','.join('?' * len(valid_ids))
+            cursor.execute(f"DELETE FROM cows WHERE id IN ({del_placeholders})", valid_ids)
+            log_audit_event(
+                username=session.get('username'),
+                farm_name=farm_name or 'Admin',
+                action='BULK_DELETE',
+                entity_type='COW',
+                details=f"Массовое удаление {len(valid_ids)} записей",
+                user_id=session.get('user_id'),
+                ip_address=request.remote_addr,
+                cursor=cursor
+            )
+        return len(valid_ids)
 
-    placeholders = ','.join('?' * len(cow_ids))
-    if user_type == 'admin':
-        cursor.execute(f"SELECT id FROM cows WHERE id IN ({placeholders})", cow_ids)
-    else:
-        cursor.execute(f"SELECT id FROM cows WHERE id IN ({placeholders}) AND farm_name = ?", cow_ids + [farm_name])
-
-    valid_ids = [c['id'] for c in cursor.fetchall()]
-
-    if valid_ids:
-        del_placeholders = ','.join('?' * len(valid_ids))
-        cursor.execute(f"DELETE FROM cows WHERE id IN ({del_placeholders})", valid_ids)
-        conn.commit()
-
-        log_audit_event(
-            username=session.get('username'),
-            farm_name=farm_name or 'Admin',
-            action='BULK_DELETE',
-            entity_type='COW',
-            details=f"Массовое удаление {len(valid_ids)} записей",
-            user_id=session.get('user_id'),
-            ip_address=request.remote_addr
-        )
-
-    conn.close()
-    return jsonify({'success': True, 'deleted_count': len(valid_ids)})
+    deleted_count = run_write_transaction(_tx_bulk_delete)
+    return jsonify({'success': True, 'deleted_count': deleted_count})
 
 
 @cows_bp.route('/add_multiple_cows', methods=['GET', 'POST'])
@@ -459,12 +452,10 @@ def add_multiple_cows():
 
         today_dt = date.today()
         today_str = today_dt.strftime('%Y-%m-%d')
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        added_cows_count = 0
-        added_stillborn_count = 0
 
-        try:
+        def _tx_batch(_conn, cursor):
+            cows_cnt = 0
+            sb_cnt = 0
             for item in cows_data:
                 if not isinstance(item, dict):
                     continue
@@ -481,30 +472,30 @@ def add_multiple_cows():
                     if errs_sb:
                         continue
                     insert_stillborn_record(cursor, farm_name, session.get('user_id'), cleaned_sb)
-                    added_stillborn_count += 1
+                    sb_cnt += 1
                     continue
 
                 cleaned_cow, errs_cow = validate_cow_payload(item_copy, today_date=today_dt)
                 if errs_cow:
                     continue
                 insert_cow_record(cursor, farm_name, session.get('user_id'), cleaned_cow)
-                added_cows_count += 1
+                cows_cnt += 1
 
-            conn.commit()
-        finally:
-            conn.close()
+            if cows_cnt + sb_cnt > 0:
+                log_audit_event(
+                    username=session.get('username'),
+                    farm_name=farm_name,
+                    action='CREATE_BATCH',
+                    entity_type='COW',
+                    details=f"Пакетно добавлено: {cows_cnt} выбытий, {sb_cnt} мертворождений",
+                    user_id=session.get('user_id'),
+                    ip_address=request.remote_addr,
+                    cursor=cursor
+                )
+            return cows_cnt, sb_cnt
 
+        added_cows_count, added_stillborn_count = run_write_transaction(_tx_batch)
         total_added = added_cows_count + added_stillborn_count
-        if total_added > 0:
-            log_audit_event(
-                username=session.get('username'),
-                farm_name=farm_name,
-                action='CREATE_BATCH',
-                entity_type='COW',
-                details=f"Пакетно добавлено: {added_cows_count} выбытий, {added_stillborn_count} мертворождений",
-                user_id=session.get('user_id'),
-                ip_address=request.remote_addr
-            )
 
         if request.is_json:
             return jsonify({'success': True, 'added_count': total_added, 'cows_count': added_cows_count, 'stillborn_count': added_stillborn_count})
@@ -598,73 +589,82 @@ def import_cows():
             return redirect(request.url)
 
         if parsed_rows:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            inserted_cows = 0
-            inserted_stillborn = 0
-            try:
-                for line_num, cat, rea, d_date, ear_tag, raw_lact, raw_w, notes in parsed_rows:
-                    rea_low = (rea or '').lower()
-                    notes_low = (notes or '').lower()
+            # Валидация до входа в пишущую транзакцию, чтобы минимизировать время удержания блокировки
+            prepared_ops = []
+            for line_num, cat, rea, d_date, ear_tag, raw_lact, raw_w, notes in parsed_rows:
+                rea_low = (rea or '').lower()
+                notes_low = (notes or '').lower()
 
-                    if _is_explicit_stillborn_row(cat, rea_low):
-                        e_type = 'Аборт (1-й триместр, до 90 дн.)' if 'аборт' in rea_low or cat == 'аборт' else Config.STILLBIRTH_EVENT_TYPES[0]
-                        cleaned_sb, errs_sb = validate_stillborn_payload({
-                            'event_date': d_date,
-                            'mother_tag': ear_tag,
-                            'event_type': e_type,
-                            'cause': rea or e_type,
-                            'weight': raw_w,
-                            'notes': notes,
-                        }, today_date=today_dt)
-                        if errs_sb:
-                            errors.append(f"Строка {line_num}: {' '.join(errs_sb)}")
-                            continue
-                        insert_stillborn_record(cursor, farm_name, session.get('user_id'), cleaned_sb)
-                        inserted_stillborn += 1
-                        continue
-
-                    lact_val = None
-                    if raw_lact is not None and str(raw_lact).strip().isdigit():
-                        lact_val = int(str(raw_lact).strip())
-                    age_group = _infer_age_group_from_import(rea_low, notes_low, lact_val)
-                    is_preg = 1 if ('сухосто' in age_group.lower() or 'нетел' in age_group.lower() or 'стельн' in rea_low) else 0
-                    gest_days = (210 if 'сухосто' in age_group.lower() else 180) if is_preg else 0
-
-                    cleaned_cow, errs_cow = validate_cow_payload({
-                        'category': cat,
-                        'reason': rea,
-                        'disposal_date': d_date,
-                        'ear_tag': ear_tag,
-                        'lactation': raw_lact,
+                if _is_explicit_stillborn_row(cat, rea_low):
+                    e_type = 'Аборт (1-й триместр, до 90 дн.)' if 'аборт' in rea_low or cat == 'аборт' else Config.STILLBIRTH_EVENT_TYPES[0]
+                    cleaned_sb, errs_sb = validate_stillborn_payload({
+                        'event_date': d_date,
+                        'mother_tag': ear_tag,
+                        'event_type': e_type,
+                        'cause': rea or e_type,
                         'weight': raw_w,
                         'notes': notes,
-                        'age_group': age_group,
-                        'breed': Config.DEFAULT_BREED,
-                        'is_pregnant': is_preg,
-                        'gestation_days': gest_days,
                     }, today_date=today_dt)
-                    if errs_cow:
-                        errors.append(f"Строка {line_num}: {' '.join(errs_cow)}")
+                    if errs_sb:
+                        errors.append(f"Строка {line_num}: {' '.join(errs_sb)}")
                         continue
+                    prepared_ops.append(('stillborn', cleaned_sb))
+                    continue
 
-                    insert_cow_record(cursor, farm_name, session.get('user_id'), cleaned_cow)
-                    inserted_cows += 1
-                conn.commit()
-            finally:
-                conn.close()
+                lact_val = None
+                if raw_lact is not None and str(raw_lact).strip().isdigit():
+                    lact_val = int(str(raw_lact).strip())
+                age_group = _infer_age_group_from_import(rea_low, notes_low, lact_val)
+                is_preg = 1 if ('сухосто' in age_group.lower() or 'нетел' in age_group.lower() or 'стельн' in rea_low) else 0
+                gest_days = (210 if 'сухосто' in age_group.lower() else 180) if is_preg else 0
+
+                cleaned_cow, errs_cow = validate_cow_payload({
+                    'category': cat,
+                    'reason': rea,
+                    'disposal_date': d_date,
+                    'ear_tag': ear_tag,
+                    'lactation': raw_lact,
+                    'weight': raw_w,
+                    'notes': notes,
+                    'age_group': age_group,
+                    'breed': Config.DEFAULT_BREED,
+                    'is_pregnant': is_preg,
+                    'gestation_days': gest_days,
+                }, today_date=today_dt)
+                if errs_cow:
+                    errors.append(f"Строка {line_num}: {' '.join(errs_cow)}")
+                    continue
+                prepared_ops.append(('cow', cleaned_cow))
+
+            inserted_cows = 0
+            inserted_stillborn = 0
+            if prepared_ops:
+                def _tx_import(_conn, cursor):
+                    c_cnt = 0
+                    s_cnt = 0
+                    for kind, payload in prepared_ops:
+                        if kind == 'stillborn':
+                            insert_stillborn_record(cursor, farm_name, session.get('user_id'), payload)
+                            s_cnt += 1
+                        else:
+                            insert_cow_record(cursor, farm_name, session.get('user_id'), payload)
+                            c_cnt += 1
+                    if c_cnt or s_cnt:
+                        log_audit_event(
+                            username=session.get('username'),
+                            farm_name=farm_name,
+                            action='IMPORT',
+                            entity_type='COW',
+                            details=f"Импортировано из файла {file.filename}: {c_cnt} выбытий, {s_cnt} мертворождений/абортов",
+                            user_id=session.get('user_id'),
+                            ip_address=request.remote_addr,
+                            cursor=cursor
+                        )
+                    return c_cnt, s_cnt
+
+                inserted_cows, inserted_stillborn = run_write_transaction(_tx_import)
 
             if inserted_cows or inserted_stillborn:
-                log_audit_event(
-                    username=session.get('username'),
-                    farm_name=farm_name,
-                    action='IMPORT',
-                    entity_type='COW',
-                    details=f"Импортировано из файла {file.filename}: {inserted_cows} выбытий, {inserted_stillborn} мертворождений/абортов",
-                    user_id=session.get('user_id'),
-                    ip_address=request.remote_addr
-                )
-
                 flash(f'Успешно импортировано записей: выбытие — {inserted_cows}, мертворождения/аборты — {inserted_stillborn}!', 'success')
                 if errors:
                     flash(f'Внимание: пропущено строк с ошибками: {len(errors)}', 'warning')

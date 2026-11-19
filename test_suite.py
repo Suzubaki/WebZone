@@ -417,6 +417,102 @@ class CattleSystemTestCase(unittest.TestCase):
                 Config.DATABASE = saved_db
                 invalidate_settings_cache()
 
+    # 10. СТРЕСС-ТЕСТ ОДНОВРЕМЕННОЙ ЗАПИСИ ИЗ НЕСКОЛЬКИХ ПОТОКОВ
+    def test_10_concurrent_writes_no_lock_errors(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from database import run_write_transaction, log_audit_event
+        from cow_queries import insert_cow_record, insert_stillborn_record
+
+        farms = ['Ферма Конк-1', 'Ферма Конк-2', 'Ферма Конк-3']
+        today_str = datetime.now().strftime('%Y-%m-%d')
+
+        def write_cow_worker(idx):
+            farm = farms[idx % len(farms)]
+            tag = f'BYCONC{idx:04d}'
+
+            def _tx(conn, cursor):
+                row_id, cow_id = insert_cow_record(cursor, farm, 1, {
+                    'ear_tag': tag,
+                    'category': 'выбраковка',
+                    'reason': 'Мастит серозный',
+                    'disposal_date': today_str,
+                    'lactation': 2,
+                    'lactation_days': 45,
+                    'weight': 520.0,
+                    'age_group': 'Полновозрастные коровы (2+ лакт.)',
+                    'milk_yield': 6200.0,
+                    'is_pregnant': 0,
+                    'gestation_days': 0,
+                })
+                log_audit_event(
+                    username='conc_worker',
+                    farm_name=farm,
+                    action='CONCURRENT_TEST_COW',
+                    entity_type='COW',
+                    entity_id=row_id,
+                    details=f'Concurrent write {cow_id}',
+                    user_id=1,
+                    cursor=cursor
+                )
+                return cow_id
+
+            return run_write_transaction(_tx)
+
+        def write_sb_worker(idx):
+            farm = farms[idx % len(farms)]
+            tag = f'BYCONCSB{idx:04d}'
+
+            def _tx(conn, cursor):
+                row_id, sb_code = insert_stillborn_record(cursor, farm, 1, {
+                    'event_date': today_str,
+                    'mother_tag': tag,
+                    'mother_group': 'Полновозрастные',
+                    'event_type': 'Мертворождение',
+                    'fetus_sex': 'Тёлочки',
+                    'fetus_weight': 29.0,
+                    'gestation_days': 276,
+                    'cause': 'Патология родов',
+                })
+                log_audit_event(
+                    username='conc_worker',
+                    farm_name=farm,
+                    action='CONCURRENT_TEST_SB',
+                    entity_type='STILLBORN',
+                    entity_id=row_id,
+                    details=f'Concurrent write {sb_code}',
+                    user_id=1,
+                    cursor=cursor
+                )
+                return sb_code
+
+            return run_write_transaction(_tx)
+
+        cow_futures = []
+        sb_futures = []
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            for i in range(24):
+                cow_futures.append(pool.submit(write_cow_worker, i))
+            for i in range(12):
+                sb_futures.append(pool.submit(write_sb_worker, i))
+
+        cow_ids = [f.result() for f in cow_futures]
+        sb_codes = [f.result() for f in sb_futures]
+
+        self.assertEqual(len(cow_ids), 24)
+        self.assertEqual(len(set(cow_ids)), 24, "Сгенерированные cow_id должны быть строго уникальными при параллельной записи")
+        self.assertEqual(len(sb_codes), 12)
+        self.assertEqual(len(set(sb_codes)), 12, "Сгенерированные record_code должны быть строго уникальными при параллельной записи")
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM cows WHERE ear_tag LIKE 'BYCONC%'")
+        self.assertEqual(cur.fetchone()[0], 24)
+        cur.execute("SELECT COUNT(*) FROM stillbirth_records WHERE mother_tag LIKE 'BYCONCSB%'")
+        self.assertEqual(cur.fetchone()[0], 12)
+        cur.execute("SELECT COUNT(*) FROM audit_logs WHERE action IN ('CONCURRENT_TEST_COW', 'CONCURRENT_TEST_SB')")
+        self.assertEqual(cur.fetchone()[0], 36)
+        conn.close()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
