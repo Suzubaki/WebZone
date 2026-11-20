@@ -879,6 +879,8 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             SELECT farm_name FROM users WHERE farm_name IS NOT NULL AND farm_name != ''
             UNION
             SELECT farm_name FROM cows WHERE farm_name IS NOT NULL AND farm_name != ''
+            UNION
+            SELECT farm_name FROM stillbirth_records WHERE farm_name IS NOT NULL AND farm_name != ''
         ) ORDER BY farm_name
     ''')
     all_farms_list = [r['farm_name'] for r in cursor.fetchall()]

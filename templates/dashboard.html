@@ -145,7 +145,12 @@
                 <p class="mb-0 text-blue-100 opacity-90 small">
                     Период анализа: <strong>{{ d.period_info.title }}</strong> | 
                     {% if user_type == 'admin' %}
-                        Охват: <strong>{{ d.all_farms|length }} ферм/МТФ</strong>
+                        {% if selected_farm and selected_farm != 'all' %}
+                            Ферма / МТФ: <strong>{{ selected_farm }}</strong>
+                            <a href="{{ url_for('main.dashboard', period=d.period_info.period, farm='all') }}" class="text-warning text-decoration-underline ms-1">(Показать все)</a>
+                        {% else %}
+                            Охват: <strong>{{ d.all_farms|length }} ферм/МТФ (Все)</strong>
+                        {% endif %}
                     {% else %}
                         Подразделение: <strong>{{ farm_name }}</strong>
                     {% endif %}
@@ -192,23 +197,35 @@
             </div>
 
             <!-- Селектор фермы для Администратора и произвольный период -->
-            <form method="GET" action="{{ url_for('dashboard') }}" class="d-flex align-items-center gap-2 flex-wrap">
-                <input type="hidden" name="period" value="custom">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
                 {% if user_type == 'admin' %}
-                <select class="form-select form-select-sm" name="farm" onchange="this.form.submit()" style="width: 180px;">
-                    <option value="all" {% if selected_farm == 'all' %}selected{% endif %}>Все фермы (Свод)</option>
-                    {% for f in d.all_farms %}
-                    <option value="{{ f }}" {% if selected_farm == f %}selected{% endif %}>{{ f }}</option>
-                    {% endfor %}
-                </select>
+                <form method="GET" action="{{ url_for('dashboard') }}" class="d-flex align-items-center gap-1">
+                    <input type="hidden" name="period" value="{{ d.period_info.period }}">
+                    {% if d.period_info.period == 'custom' %}
+                    <input type="hidden" name="custom_start" value="{{ d.period_info.start_date }}">
+                    <input type="hidden" name="custom_end" value="{{ d.period_info.end_date }}">
+                    {% endif %}
+                    <select class="form-select form-select-sm" name="farm" onchange="this.form.submit()" style="width: 200px;" title="Просмотр аналитики по конкретной ферме или по всем">
+                        <option value="all" {% if selected_farm == 'all' %}selected{% endif %}>Все фермы (Свод)</option>
+                        {% for f in d.all_farms %}
+                        <option value="{{ f }}" {% if selected_farm == f %}selected{% endif %}>{{ f }}</option>
+                        {% endfor %}
+                    </select>
+                </form>
                 {% endif %}
-                <div class="input-group input-group-sm" style="width: 270px;">
-                    <input type="date" class="form-control" name="custom_start" value="{{ d.period_info.start_date }}" required>
-                    <span class="input-group-text">-</span>
-                    <input type="date" class="form-control" name="custom_end" value="{{ d.period_info.end_date }}" required>
-                    <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
-                </div>
-            </form>
+                <form method="GET" action="{{ url_for('dashboard') }}" class="d-flex align-items-center gap-2">
+                    <input type="hidden" name="period" value="custom">
+                    {% if user_type == 'admin' %}
+                    <input type="hidden" name="farm" value="{{ selected_farm }}">
+                    {% endif %}
+                    <div class="input-group input-group-sm" style="width: 270px;">
+                        <input type="date" class="form-control" name="custom_start" value="{{ d.period_info.start_date }}" required>
+                        <span class="input-group-text">-</span>
+                        <input type="date" class="form-control" name="custom_end" value="{{ d.period_info.end_date }}" required>
+                        <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 </div>
@@ -1006,9 +1023,16 @@
                     {% for fm in d.farm_matrix %}
                     <tr>
                         <td class="fw-bold">
-                            <a href="javascript:void(0)" onclick="drillToCows({farm: '{{ fm.farm }}'})" class="drilldown-link text-primary fw-bold" title="Открыть журнал выбытия: {{ fm.farm }}">
-                                <i class="bi bi-geo-alt-fill me-1"></i> {{ fm.farm }} <i class="bi bi-box-arrow-up-right small text-muted ms-1"></i>
-                            </a>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <a href="javascript:void(0)" onclick="drillToCows({farm: '{{ fm.farm }}'})" class="drilldown-link text-primary fw-bold" title="Открыть журнал выбытия: {{ fm.farm }}">
+                                    <i class="bi bi-geo-alt-fill me-1"></i> {{ fm.farm }}
+                                </a>
+                                {% if user_type == 'admin' and selected_farm == 'all' %}
+                                <a href="{{ url_for('main.dashboard', period=d.period_info.period, farm=fm.farm) }}" class="badge bg-light text-secondary border text-decoration-none" title="Открыть дашборд фермы {{ fm.farm }}">
+                                    <i class="bi bi-speedometer2"></i> Дашборд
+                                </a>
+                                {% endif %}
+                            </div>
                         </td>
                         <td class="text-center">
                             <a href="javascript:void(0)" onclick="drillToCows({farm: '{{ fm.farm }}'})" class="drilldown-link fw-bold text-dark" title="Все выбытия по {{ fm.farm }}">

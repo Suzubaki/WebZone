@@ -47,7 +47,7 @@
                             <select class="form-select form-select-sm" id="farm_filter">
                                 <option value="">Все фермы</option>
                                 {% for f in farms or [] %}
-                                <option value="{{ f }}">{{ f }}</option>
+                                <option value="{{ f }}" {% if initial_farm == f %}selected{% endif %}>{{ f }}</option>
                                 {% endfor %}
                             </select>
                         </div>
@@ -97,21 +97,21 @@
                             <label class="form-label small fw-semibold text-primary">Фаза DIM</label>
                             <select class="form-select form-select-sm" id="lactation_phase_filter">
                                 <option value="">Все стадии</option>
-                                <option value="Новотел">⚡ Новотел (0–30)</option>
-                                <option value="Раздой">📈 Раздой (31–100)</option>
-                                <option value="Середина">⚖️ Середина (101–200)</option>
-                                <option value="Спад">📉 Спад (201+)</option>
-                                <option value="Сухостой">💤 Сухостой</option>
-                                <option value="Молодняк">👶 Молодняк</option>
+                                <option value="Новотел">Новотел (0–30)</option>
+                                <option value="Раздой">Раздой (31–100)</option>
+                                <option value="Середина">Середина (101–200)</option>
+                                <option value="Спад">Спад (201+)</option>
+                                <option value="Сухостой">Сухостой</option>
+                                <option value="Молодняк">Молодняк</option>
                             </select>
                         </div>
 
                         <div class="col-md-3">
-                            <label class="form-label small fw-semibold text-danger"><i class="bi bi-suit-heart-fill me-1"></i> Выбытие стельных коров</label>
+                            <label class="form-label small fw-semibold text-danger">Выбытие стельных коров</label>
                             <select class="form-select form-select-sm border-danger-subtle fw-semibold" id="repro_filter">
                                 <option value="">Все статусы</option>
-                                <option value="pregnant" {% if repro_filter == 'pregnant' %}selected{% endif %}>⚠️ Только выбытие стельных</option>
-                                <option value="pregnant_late" {% if repro_filter == 'pregnant_late' %}selected{% endif %}>🤰 Глубокостельные (180+ дн.)</option>
+                                <option value="pregnant" {% if repro_filter == 'pregnant' %}selected{% endif %}>Только выбытие стельных</option>
+                                <option value="pregnant_late" {% if repro_filter == 'pregnant_late' %}selected{% endif %}>Глубокостельные (180+ дн.)</option>
                             </select>
                         </div>
                         
@@ -223,7 +223,7 @@
                                 <td>
                                     {{ cow.reason }}
                                     {% if cow.is_pregnant == 1 %}
-                                        <span class="badge bg-warning-subtle text-dark border border-warning-subtle ms-1" title="Срок стельности: {{ cow.gestation_days or 0 }} дн."><i class="bi bi-suit-heart-fill text-danger"></i> Стельная</span>
+                                        <span class="badge bg-warning-subtle text-dark border border-warning-subtle ms-1" title="Срок стельности: {{ cow.gestation_days or 0 }} дн.">Стельная</span>
                                     {% endif %}
                                     {% if cow.is_stillborn == 1 %}
                                         <span class="badge bg-danger-subtle text-danger border border-danger-subtle ms-1"><i class="bi bi-x-circle-fill"></i> Мертворожд./Аборт</span>
@@ -429,7 +429,7 @@ $(document).ready(function() {
                 var reproBadge = '';
                 if (cow.is_pregnant === 1) {
                     var gTxt = cow.gestation_days ? (' (' + Math.round(cow.gestation_days / 30 * 10) / 10 + ' мес.)') : '';
-                    reproBadge = ' <span class="badge bg-warning-subtle text-dark border border-warning-subtle ms-1" title="Срок стельности: ' + (cow.gestation_days || 0) + ' дн."><i class="bi bi-suit-heart-fill text-danger me-1"></i>Стельная' + gTxt + '</span>';
+                    reproBadge = ' <span class="badge bg-warning-subtle text-dark border border-warning-subtle ms-1" title="Срок стельности: ' + (cow.gestation_days || 0) + ' дн.">Стельная' + gTxt + '</span>';
                 }
                 if (cow.is_stillborn === 1) {
                     reproBadge += ' <span class="badge bg-danger-subtle text-danger border border-danger-subtle ms-1"><i class="bi bi-x-circle-fill me-1"></i>Мертворожд.</span>';

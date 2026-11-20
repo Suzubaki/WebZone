@@ -581,6 +581,40 @@ class CattleSystemTestCase(unittest.TestCase):
                 Config.DATABASE = saved_db
                 invalidate_settings_cache()
 
+    # 12. ПРОВЕРКА ЖУРНАЛА БЕЗ ИКОНОК В ФАЗАХ/СТЕЛЬНОСТИ И ПРОСМОТРА ПО КОНКРЕТНЫМ ФЕРМАМ
+    def test_12_clean_journal_and_per_farm_view(self):
+        self.login('admin', 'AdminTest#123')
+
+        res_cows = self.client.get('/cows')
+        self.assertEqual(res_cows.status_code, 200)
+        html_cows = res_cows.data.decode('utf-8')
+        for unwanted in ('⚡', '📈', '⚖️', '📉', '💤', '👶', '⚠️', '🤰', 'bi-suit-heart'):
+            self.assertNotIn(unwanted, html_cows)
+
+        # Администратор видит все зарегистрированные фермы (даже если по ферме ещё нет записей)
+        self.assertIn('Ферма 1', html_cows)
+        self.assertIn('Ферма 2', html_cows)
+
+        res_sb = self.client.get('/stillborn')
+        self.assertEqual(res_sb.status_code, 200)
+        html_sb = res_sb.data.decode('utf-8')
+        self.assertIn('Ферма 1', html_sb)
+        self.assertIn('Ферма 2', html_sb)
+
+        res_dash = self.client.get('/dashboard?period=all&farm=' + 'Ферма 1')
+        self.assertEqual(res_dash.status_code, 200)
+        html_dash = res_dash.data.decode('utf-8')
+        self.assertIn('Ферма / МТФ: <strong>Ферма 1</strong>', html_dash)
+        self.assertIn('<input type="hidden" name="period" value="all">', html_dash)
+
+        res_farms = self.client.get('/get_farms')
+        self.assertEqual(res_farms.status_code, 200)
+        farms_json = res_farms.get_json()
+        self.assertIn('Ферма 1', farms_json)
+        self.assertIn('Ферма 2', farms_json)
+
+        self.logout()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

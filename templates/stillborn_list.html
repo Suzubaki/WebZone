@@ -74,7 +74,7 @@
                     {% if user_type == 'admin' %}
                     <div class="col-md-3">
                         <label class="form-label small fw-semibold text-muted">Ферма / МТФ</label>
-                        <select name="farm" class="form-select form-select-sm">
+                        <select name="farm" class="form-select form-select-sm" onchange="this.form.submit()">
                             <option value="all">Все фермы</option>
                             {% for f in farms %}
                             <option value="{{ f }}" {% if initial_farm == f %}selected{% endif %}>{{ f }}</option>

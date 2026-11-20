@@ -16,6 +16,8 @@ def get_farms():
             SELECT farm_name FROM users WHERE farm_name IS NOT NULL AND farm_name != ''
             UNION
             SELECT farm_name FROM cows WHERE farm_name IS NOT NULL AND farm_name != ''
+            UNION
+            SELECT farm_name FROM stillbirth_records WHERE farm_name IS NOT NULL AND farm_name != ''
         ) ORDER BY farm_name
     ''')
     farms = [r['farm_name'] for r in cursor.fetchall()]
