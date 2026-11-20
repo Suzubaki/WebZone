@@ -34,3 +34,19 @@
      ```
 4. Нажмите зелёную кнопку **Reload <ваш-логин>.pythonanywhere.com**.
 5. Войдите под пользователем `admin`. Все учётные записи ферм и их пароли создаются, изменяются и выдаются исключительно администратором через меню **Администрирование → Пользователи ферм / Создать аккаунт**.
+
+## Очистка базы данных перед запуском в работу
+
+### Вариант 1: Удалить только тестовые записи (сохранив пользователей, фермы, причины и нормативы)
+Выполните в Bash-консоли PythonAnywhere в папке проекта:
+```bash
+python3 -c "from database import run_write_transaction; run_write_transaction(lambda c, cur: [cur.execute(q) for q in ('DELETE FROM cows', 'DELETE FROM stillbirth_records', 'DELETE FROM farm_counters', 'DELETE FROM audit_logs', \"DELETE FROM sqlite_sequence WHERE name IN ('cows','stillbirth_records','audit_logs')\")])"
+```
+После этого нажмите **Reload** на вкладке **Web**.
+
+### Вариант 2: Полный сброс базы данных с нуля
+```bash
+rm -f cattle_disposal.db cattle_disposal.db-wal cattle_disposal.db-shm
+python3 create_users.py
+```
+После этого нажмите **Reload** на вкладке **Web**.

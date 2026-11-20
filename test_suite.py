@@ -388,6 +388,15 @@ class CattleSystemTestCase(unittest.TestCase):
 
         self.logout()
 
+        # 8.7 Проверка удаления тестовой кнопки/маршрута загрузки 1000 записей
+        self.login('admin', 'AdminTest#123')
+        res_admin_dash = self.client.get('/dashboard')
+        self.assertEqual(res_admin_dash.status_code, 200)
+        self.assertNotIn(b'seed_test_data', res_admin_dash.data)
+        self.assertNotIn('Загрузить 1 000 коров'.encode('utf-8'), res_admin_dash.data)
+        self.assertEqual(self.client.get('/seed_test_data').status_code, 404)
+        self.logout()
+
     # 9. ПРОВЕРКА ПЕРВИЧНОГО СИДИНГА create_default_users ТОЛЬКО ПРИ ПУСТОЙ БД
     def test_09_initial_admin_only_on_empty_db(self):
         from create_users import create_default_users
@@ -512,6 +521,65 @@ class CattleSystemTestCase(unittest.TestCase):
         cur.execute("SELECT COUNT(*) FROM audit_logs WHERE action IN ('CONCURRENT_TEST_COW', 'CONCURRENT_TEST_SB')")
         self.assertEqual(cur.fetchone()[0], 36)
         conn.close()
+
+    # 11. ТЕСТЫ СОХРАНЕНИЯ ПОЛЬЗОВАТЕЛЬСКИХ ПРИЧИН И РАСШИРЕНИЯ СПРАВОЧНИКА
+    def test_11_reasons_preserved_and_expanded(self):
+        from domain import classify_pathology_system
+        from database import get_reasons_for_category
+
+        # Классификация новых ветеринарных диагнозов
+        self.assertEqual(classify_pathology_system('Смещение / заворот сычуга'), 'Органы пищеварения')
+        self.assertEqual(classify_pathology_system('Сальмонеллёз телят'), 'Болезни молодняка (диспепсия)')
+        self.assertEqual(classify_pathology_system('Болезнь Мортелларо (пальцевой дерматит)'), 'Конечности и травматизм')
+        self.assertEqual(classify_pathology_system('Послеродовой парез (родильный парез)'), 'Нарушения обмена веществ')
+        self.assertEqual(classify_pathology_system('Травматический перикардит'), 'Сердечно-сосудистая система')
+
+        saved_db = Config.DATABASE
+        with tempfile.TemporaryDirectory() as td:
+            db_reasons = os.path.join(td, 'reasons_upgrade.db')
+            Config.DATABASE = db_reasons
+            invalidate_settings_cache()
+            try:
+                # Имитация существующей БД старой версии с пользовательской причиной и скрытой причиной
+                conn = sqlite3.connect(db_reasons)
+                conn.execute('''
+                    CREATE TABLE disposal_reasons (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        category TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        is_active INTEGER DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(category, name)
+                    )
+                ''')
+                conn.execute("INSERT INTO disposal_reasons (category, name, is_active) VALUES ('падёж', 'Пользовательская причина фермы', 1)")
+                conn.execute("INSERT INTO disposal_reasons (category, name, is_active) VALUES ('падёж', 'Патологические роды', 0)")
+                conn.commit()
+                conn.close()
+
+                init_db()
+
+                all_death = get_reasons_for_category('падёж', include_inactive=True)
+                by_name = {r['name']: r['is_active'] for r in all_death}
+                self.assertIn('Пользовательская причина фермы', by_name)
+                self.assertEqual(by_name['Пользовательская причина фермы'], 1)
+                self.assertEqual(by_name['Патологические роды'], 0)
+                self.assertIn('Смещение / заворот сычуга', by_name)
+                self.assertGreaterEqual(len(get_reasons_for_category('выбраковка')), 25)
+                self.assertGreaterEqual(len(get_reasons_for_category('санитарный')), 20)
+
+                # Удалённая вручную причина после обновления до v2 не должна возвращаться при повторном init_db()
+                conn = sqlite3.connect(db_reasons)
+                conn.execute("DELETE FROM disposal_reasons WHERE category = 'санитарный' AND name = 'Закупорка пищевода'")
+                conn.commit()
+                conn.close()
+
+                init_db()
+                san_reasons = get_reasons_for_category('санитарный')
+                self.assertNotIn('Закупорка пищевода', san_reasons)
+            finally:
+                Config.DATABASE = saved_db
+                invalidate_settings_cache()
 
 
 if __name__ == '__main__':

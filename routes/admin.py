@@ -162,24 +162,6 @@ def restore_backup():
         flash(msg, 'danger')
     return redirect(url_for('admin.backup'))
 
-@admin_bp.route('/seed_test_data')
-@admin_required
-def seed_test_data():
-    """Генерация реалистичного массива тестовых данных (1 000 коров) — только для администраторов"""
-    from add_test_cows import generate_test_cows
-    generate_test_cows(1000)
-    log_audit_event(
-        username=session.get('username'),
-        farm_name='Admin',
-        action='SEED_TEST_DATA',
-        entity_type='SETTINGS',
-        details="Сгенерировано 1 000 тестовых записей выбытия КРС",
-        user_id=session.get('user_id'),
-        ip_address=request.remote_addr
-    )
-    flash('Успешно добавлено 1 000 коров в базу данных!', 'success')
-    return redirect(url_for('cows.view_cows'))
-
 @admin_bp.route('/settings', methods=['GET', 'POST'])
 @admin_required
 def settings():

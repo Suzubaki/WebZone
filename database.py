@@ -459,15 +459,26 @@ def init_db():
     # Заполнение нормализованных колонок для существующих записей
     _backfill_normalized_columns(cursor)
 
-    # Заполнение справочника причин по умолчанию, если он пуст
+    # Заполнение и безопасное расширение справочника причин (сохраняет все существующие/пользовательские причины и их статусы)
+    cursor.execute("SELECT value FROM system_settings WHERE key = 'reasons_catalog_version'")
+    row_ver = cursor.fetchone()
+    catalog_ver = int(row_ver['value']) if row_ver and str(row_ver['value']).isdigit() else 0
     cursor.execute("SELECT COUNT(*) as cnt FROM disposal_reasons")
-    if cursor.fetchone()['cnt'] == 0:
+    reasons_count = cursor.fetchone()['cnt']
+
+    target_catalog_ver = 2
+    if reasons_count == 0 or catalog_ver < target_catalog_ver:
         for cat, reasons in Config.DISPOSAL_CATEGORIES.items():
             for reason in reasons:
                 cursor.execute('''
                     INSERT OR IGNORE INTO disposal_reasons (category, name, is_active)
                     VALUES (?, ?, 1)
                 ''', (cat, reason))
+        cursor.execute('''
+            INSERT INTO system_settings (key, value, description)
+            VALUES ('reasons_catalog_version', ?, 'Версия базового справочника причин выбытия')
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        ''', (str(target_catalog_ver),))
 
     # Заполнение настроек по умолчанию, если отсутствуют
     sc = Config.DEFAULT_SCORECARD_THRESHOLDS
