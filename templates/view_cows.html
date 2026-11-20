@@ -40,6 +40,27 @@
 
                 <!-- Панель фильтров -->
                 <div class="bg-light p-3 rounded-3 mb-4 border">
+                    {% if user_type == 'admin' %}
+                    <div class="d-flex flex-wrap align-items-center gap-2 pb-2 mb-3 border-bottom" id="farmQuickFilterBar">
+                        <span class="small text-muted fw-bold me-1"><i class="bi bi-buildings"></i> Ферма / МТФ:</span>
+                        <button type="button" class="btn btn-sm farm-chip {% if not initial_farm or initial_farm == 'all' %}btn-primary{% else %}btn-outline-secondary bg-white{% endif %} rounded-pill px-3 fw-semibold" data-farm="">
+                            Все фермы
+                        </button>
+                        {% if farms and farms|length <= 12 %}
+                            {% for f in farms %}
+                            <button type="button" class="btn btn-sm farm-chip {% if initial_farm == f %}btn-primary{% else %}btn-outline-secondary bg-white{% endif %} rounded-pill px-3 fw-semibold" data-farm="{{ f }}">
+                                {{ f }}
+                            </button>
+                            {% endfor %}
+                        {% endif %}
+                        {% if not farms %}
+                        <span class="small text-muted">
+                            Нет зарегистрированных ферм —
+                            <a href="{{ url_for('user_management') }}" class="text-decoration-underline">добавить в «Пользователи ферм»</a>
+                        </span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
                     <div class="row g-2 align-items-end">
                         {% if user_type == 'admin' %}
                         <div class="col-md-2">
@@ -153,7 +174,7 @@
                     </div>
                     <div class="col-md-4 text-end">
                         <span class="badge bg-primary fs-6 p-2">
-                            <i class="bi bi-database"></i> Всего в базе: <span id="total_db_count">{{ total_count or 0 }}</span> гол.
+                            <i class="bi bi-database"></i> В выборке: <span id="total_db_count">{{ total_count or 0 }}</span> гол.
                         </span>
                     </div>
                 </div>
@@ -316,7 +337,45 @@ $(document).ready(function() {
         }
     });
 
-    $('#farm_filter, #reason_filter, #date_sort, #age_group_filter, #lactation_phase_filter, #repro_filter, #start_date_filter, #end_date_filter').change(function() {
+    function syncFarmChips(selectedFarm) {
+        var val = selectedFarm || '';
+        $('.farm-chip').each(function() {
+            var chipFarm = $(this).attr('data-farm') || '';
+            if (chipFarm === val) {
+                $(this).removeClass('btn-outline-secondary bg-white').addClass('btn-primary');
+            } else {
+                $(this).removeClass('btn-primary').addClass('btn-outline-secondary bg-white');
+            }
+        });
+    }
+
+    function syncFarmQueryUrl(selectedFarm) {
+        if (!window.history || !window.history.replaceState) return;
+        var curUrl = new URL(window.location.href);
+        if (selectedFarm) {
+            curUrl.searchParams.set('farm', selectedFarm);
+        } else {
+            curUrl.searchParams.delete('farm');
+        }
+        window.history.replaceState({}, '', curUrl.pathname + (curUrl.search ? curUrl.search : ''));
+    }
+
+    $(document).on('click', '.farm-chip', function() {
+        var farmVal = $(this).attr('data-farm') || '';
+        $('#farm_filter').val(farmVal);
+        syncFarmChips(farmVal);
+        syncFarmQueryUrl(farmVal);
+        loadPage(1);
+    });
+
+    $('#farm_filter').change(function() {
+        var farmVal = $(this).val() || '';
+        syncFarmChips(farmVal);
+        syncFarmQueryUrl(farmVal);
+        loadPage(1);
+    });
+
+    $('#reason_filter, #date_sort, #age_group_filter, #lactation_phase_filter, #repro_filter, #start_date_filter, #end_date_filter').change(function() {
         loadPage(1);
     });
 
@@ -330,6 +389,8 @@ $(document).ready(function() {
 
     $('#reset_filters').click(function() {
         $('#farm_filter').val('');
+        syncFarmChips('');
+        syncFarmQueryUrl('');
         $('#category_filter').val('');
         $('#reason_filter').html('<option value="">Все причины</option>').val('').prop('disabled', true);
         $('#pathology_system_filter').val('');
@@ -392,6 +453,7 @@ $(document).ready(function() {
             currentPage = res.page || targetPage; // Обновляем строго при успехе ответа
 
             $('#row_count').text(totalFiltered);
+            $('#total_db_count').text(totalFiltered);
             $('#pageInfoText').html('Показано <strong>' + res.start_index + '–' + res.end_index + '</strong> из <strong>' + totalFiltered + '</strong> записей (Стр. ' + currentPage + ' из ' + totalPages + ')');
 
             var tbody = $('#cowsTableBody');
@@ -590,6 +652,7 @@ $(document).ready(function() {
     var paramFarm = urlParams.get('farm');
     if (paramFarm && paramFarm !== 'all') {
         $('#farm_filter').val(paramFarm);
+        syncFarmChips(paramFarm);
         filterLabels.push('Ферма: ' + paramFarm);
         hasInitial = true;
     }

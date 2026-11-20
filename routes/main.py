@@ -27,7 +27,7 @@ def dashboard():
     
     selected_farm = farm_name
     if user_type == 'admin':
-        selected_farm = request.args.get('farm', 'all')
+        selected_farm = (request.args.get('farm') or 'all').strip() or 'all'
         
     dashboard_data = get_dashboard_full_data(
         user_type=user_type,

@@ -196,23 +196,8 @@
                    class="filter-chip {% if d.period_info.period == 'all' %}active{% endif %}">Всё время</a>
             </div>
 
-            <!-- Селектор фермы для Администратора и произвольный период -->
+            <!-- Произвольный период -->
             <div class="d-flex align-items-center gap-2 flex-wrap">
-                {% if user_type == 'admin' %}
-                <form method="GET" action="{{ url_for('dashboard') }}" class="d-flex align-items-center gap-1">
-                    <input type="hidden" name="period" value="{{ d.period_info.period }}">
-                    {% if d.period_info.period == 'custom' %}
-                    <input type="hidden" name="custom_start" value="{{ d.period_info.start_date }}">
-                    <input type="hidden" name="custom_end" value="{{ d.period_info.end_date }}">
-                    {% endif %}
-                    <select class="form-select form-select-sm" name="farm" onchange="this.form.submit()" style="width: 200px;" title="Просмотр аналитики по конкретной ферме или по всем">
-                        <option value="all" {% if selected_farm == 'all' %}selected{% endif %}>Все фермы (Свод)</option>
-                        {% for f in d.all_farms %}
-                        <option value="{{ f }}" {% if selected_farm == f %}selected{% endif %}>{{ f }}</option>
-                        {% endfor %}
-                    </select>
-                </form>
-                {% endif %}
                 <form method="GET" action="{{ url_for('dashboard') }}" class="d-flex align-items-center gap-2">
                     <input type="hidden" name="period" value="custom">
                     {% if user_type == 'admin' %}
@@ -227,6 +212,43 @@
                 </form>
             </div>
         </div>
+
+        {% if user_type == 'admin' %}
+        <!-- Быстрый выбор: все фермы или конкретная ферма / МТФ -->
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 border-top pt-2 mt-2">
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <span class="small text-muted fw-bold me-1"><i class="bi bi-buildings"></i> Ферма / МТФ:</span>
+                <a href="{{ url_for('main.dashboard', period=d.period_info.period, farm='all', custom_start=d.period_info.start_date if d.period_info.period == 'custom' else None, custom_end=d.period_info.end_date if d.period_info.period == 'custom' else None) }}"
+                   class="filter-chip {% if not selected_farm or selected_farm == 'all' %}active{% endif %}">Все фермы</a>
+                {% if d.all_farms|length <= 12 %}
+                    {% for f in d.all_farms %}
+                    <a href="{{ url_for('main.dashboard', period=d.period_info.period, farm=f, custom_start=d.period_info.start_date if d.period_info.period == 'custom' else None, custom_end=d.period_info.end_date if d.period_info.period == 'custom' else None) }}"
+                       class="filter-chip {% if selected_farm == f %}active{% endif %}">{{ f }}</a>
+                    {% endfor %}
+                {% endif %}
+                {% if not d.all_farms %}
+                <span class="small text-muted">
+                    Нет зарегистрированных ферм —
+                    <a href="{{ url_for('user_management') }}" class="text-decoration-underline">добавить в «Пользователи ферм»</a>
+                </span>
+                {% endif %}
+            </div>
+
+            <form method="GET" action="{{ url_for('dashboard') }}" class="d-flex align-items-center gap-2">
+                <input type="hidden" name="period" value="{{ d.period_info.period }}">
+                {% if d.period_info.period == 'custom' %}
+                <input type="hidden" name="custom_start" value="{{ d.period_info.start_date }}">
+                <input type="hidden" name="custom_end" value="{{ d.period_info.end_date }}">
+                {% endif %}
+                <select class="form-select form-select-sm" name="farm" onchange="this.form.submit()" style="min-width: 210px;" title="Просмотр аналитики по конкретной ферме или по всем">
+                    <option value="all" {% if not selected_farm or selected_farm == 'all' %}selected{% endif %}>Все фермы (Свод)</option>
+                    {% for f in d.all_farms %}
+                    <option value="{{ f }}" {% if selected_farm == f %}selected{% endif %}>{{ f }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -1028,7 +1050,7 @@
                                     <i class="bi bi-geo-alt-fill me-1"></i> {{ fm.farm }}
                                 </a>
                                 {% if user_type == 'admin' and selected_farm == 'all' %}
-                                <a href="{{ url_for('main.dashboard', period=d.period_info.period, farm=fm.farm) }}" class="badge bg-light text-secondary border text-decoration-none" title="Открыть дашборд фермы {{ fm.farm }}">
+                                <a href="{{ url_for('main.dashboard', period=d.period_info.period, farm=fm.farm, custom_start=d.period_info.start_date if d.period_info.period == 'custom' else None, custom_end=d.period_info.end_date if d.period_info.period == 'custom' else None) }}" class="badge bg-light text-secondary border text-decoration-none" title="Открыть дашборд фермы {{ fm.farm }}">
                                     <i class="bi bi-speedometer2"></i> Дашборд
                                 </a>
                                 {% endif %}
@@ -1204,7 +1226,7 @@
             <a href="javascript:void(0)" onclick="drillToCows({repro_filter: 'pregnant'})" class="btn btn-sm btn-outline-danger fw-semibold">
                 <i class="bi bi-list-check me-1"></i> Журнал выбывших стельных ({{ d.reproduction.pregnant_count }})
             </a>
-            <a href="{{ url_for('stillborn.stillborn_list') }}" class="btn btn-sm btn-outline-danger fw-semibold">
+            <a href="{{ url_for('stillborn.stillborn_list', farm=selected_farm if (user_type == 'admin' and selected_farm and selected_farm != 'all') else None) }}" class="btn btn-sm btn-outline-danger fw-semibold">
                 <i class="bi bi-heartbreak-fill me-1"></i> Журнал мертворождений и абортов ({{ d.reproduction.stillborn_count }})
             </a>
         </div>
@@ -1392,7 +1414,7 @@
 <div class="card shadow-sm mb-4">
     <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
         <h6 class="mb-0 fw-bold"><i class="bi bi-clock-history text-secondary me-2"></i> Последние зарегистрированные записи (Мониторинг)</h6>
-        <a href="{{ url_for('view_cows') }}" class="btn btn-sm btn-outline-primary">
+        <a href="{{ url_for('view_cows', farm=selected_farm if (user_type == 'admin' and selected_farm and selected_farm != 'all') else None) }}" class="btn btn-sm btn-outline-primary">
             Открыть полный журнал ({{ d.kpi.all_time_total }} записей) <i class="bi bi-arrow-right"></i>
         </a>
     </div>

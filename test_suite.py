@@ -583,6 +583,38 @@ class CattleSystemTestCase(unittest.TestCase):
 
     # 12. ПРОВЕРКА ЖУРНАЛА БЕЗ ИКОНОК В ФАЗАХ/СТЕЛЬНОСТИ И ПРОСМОТРА ПО КОНКРЕТНЫМ ФЕРМАМ
     def test_12_clean_journal_and_per_farm_view(self):
+        # Добавим по одной записи в две разные фермы для проверки раздельного просмотра
+        self.login('farm1', 'Farm1Test#123')
+        csrf1 = self.get_csrf_token('/add_cow')
+        today_s = datetime.now().strftime('%Y-%m-%d')
+        self.client.post('/add_cow', data={
+            'csrf_token': csrf1,
+            'ear_tag': 'BYFARM1TEST',
+            'category': 'выбраковка',
+            'reason': 'Мастит хронический (атрофия долей)',
+            'disposal_date': today_s,
+            'lactation': '2',
+            'lactation_days': '45',
+            'weight': '520',
+            'age_group': 'Полновозрастные коровы (2+ лакт.)',
+        }, follow_redirects=True)
+        self.logout()
+
+        self.login('farm2', 'Farm2Test#123')
+        csrf2 = self.get_csrf_token('/add_cow')
+        self.client.post('/add_cow', data={
+            'csrf_token': csrf2,
+            'ear_tag': 'BYFARM2TEST',
+            'category': 'падёж',
+            'reason': 'Гастроэнтерит',
+            'disposal_date': today_s,
+            'lactation': '1',
+            'lactation_days': '15',
+            'weight': '490',
+            'age_group': 'Коровы 1-й лактации (первотёлки)',
+        }, follow_redirects=True)
+        self.logout()
+
         self.login('admin', 'AdminTest#123')
 
         res_cows = self.client.get('/cows')
@@ -591,9 +623,24 @@ class CattleSystemTestCase(unittest.TestCase):
         for unwanted in ('⚡', '📈', '⚖️', '📉', '💤', '👶', '⚠️', '🤰', 'bi-suit-heart'):
             self.assertNotIn(unwanted, html_cows)
 
-        # Администратор видит все зарегистрированные фермы (даже если по ферме ещё нет записей)
+        # Администратор видит все зарегистрированные фермы и быстрые кнопки переключения
         self.assertIn('Ферма 1', html_cows)
         self.assertIn('Ферма 2', html_cows)
+        self.assertIn('data-farm="Ферма 1"', html_cows)
+        self.assertIn('data-farm="Ферма 2"', html_cows)
+
+        # Фильтрация в журнале по конкретной ферме
+        res_cows_f1 = self.client.get('/cows?farm=Ферма 1')
+        self.assertEqual(res_cows_f1.status_code, 200)
+        html_cows_f1 = res_cows_f1.data.decode('utf-8')
+        self.assertIn('BYFARM1TEST', html_cows_f1)
+        self.assertNotIn('BYFARM2TEST', html_cows_f1)
+
+        res_api_f2 = self.client.get('/api/cows?farm=Ферма 2')
+        self.assertEqual(res_api_f2.status_code, 200)
+        api_f2_tags = [c['ear_tag'] for c in res_api_f2.get_json()['cows']]
+        self.assertIn('BYFARM2TEST', api_f2_tags)
+        self.assertNotIn('BYFARM1TEST', api_f2_tags)
 
         res_sb = self.client.get('/stillborn')
         self.assertEqual(res_sb.status_code, 200)
@@ -601,11 +648,21 @@ class CattleSystemTestCase(unittest.TestCase):
         self.assertIn('Ферма 1', html_sb)
         self.assertIn('Ферма 2', html_sb)
 
+        # На дашборде доступны как "Все фермы", так и быстрые кнопки конкретных ферм
+        res_dash_all = self.client.get('/dashboard?period=all')
+        self.assertEqual(res_dash_all.status_code, 200)
+        html_dash_all = res_dash_all.data.decode('utf-8')
+        self.assertIn('Все фермы', html_dash_all)
+        self.assertIn('Ферма 1', html_dash_all)
+        self.assertIn('Ферма 2', html_dash_all)
+
         res_dash = self.client.get('/dashboard?period=all&farm=' + 'Ферма 1')
         self.assertEqual(res_dash.status_code, 200)
         html_dash = res_dash.data.decode('utf-8')
         self.assertIn('Ферма / МТФ: <strong>Ферма 1</strong>', html_dash)
         self.assertIn('<input type="hidden" name="period" value="all">', html_dash)
+        self.assertIn('BYFARM1TEST', html_dash)
+        self.assertNotIn('BYFARM2TEST', html_dash)
 
         res_farms = self.client.get('/get_farms')
         self.assertEqual(res_farms.status_code, 200)
