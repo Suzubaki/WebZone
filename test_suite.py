@@ -1015,6 +1015,45 @@ class CattleSystemTestCase(unittest.TestCase):
 
         self.logout()
 
+    # 16. ПРОВЕРКА ПЛАНОВОГО ЕЖЕНЕДЕЛЬНОГО И ЕЖЕМЕСЯЧНОГО БЭКАПА (scheduled_backup.py)
+    def test_16_scheduled_weekly_and_monthly_backup(self):
+        from scheduled_backup import run_scheduled_backup
+
+        with tempfile.TemporaryDirectory() as bak_dir:
+            # Создаем 2 искусственные старые копии за прошлые месяцы для проверки ротации (keep=2)
+            for old_name in ('agro_backup_RB_20250101_030000.sqlite', 'agro_backup_RB_20250201_030000.sqlite'):
+                with open(os.path.join(bak_dir, old_name), 'wb') as f:
+                    f.write(b'SQLite format 3\x00' + b'\x00' * 100)
+
+            # Еженедельный режим (по умолчанию)
+            res1 = run_scheduled_backup(backup_dir=bak_dir, period='weekly', keep=2)
+            self.assertTrue(res1['created'])
+            self.assertTrue(os.path.exists(res1['path']))
+            with open(res1['path'], 'rb') as f:
+                self.assertTrue(f.read(15).startswith(b'SQLite format 3'))
+            self.assertEqual(res1['removed'], ['agro_backup_RB_20250101_030000.sqlite'])
+
+            # Повторный запуск на той же неделе не создаёт дубликат
+            res2 = run_scheduled_backup(backup_dir=bak_dir, period='weekly', keep=2)
+            self.assertFalse(res2['created'])
+            self.assertEqual(res2['path'], res1['path'])
+
+            # И в ежемесячном режиме при наличии копии за текущий месяц дубликат не создаётся
+            res3 = run_scheduled_backup(backup_dir=bak_dir, period='monthly', keep=2)
+            self.assertFalse(res3['created'])
+            self.assertEqual(res3['path'], res1['path'])
+
+            sqlite_files = [fn for fn in os.listdir(bak_dir) if fn.endswith('.sqlite')]
+            self.assertEqual(len(sqlite_files), 2)
+
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT username, action, details FROM audit_logs WHERE username = 'AutoBackup' AND action = 'BACKUP'")
+            row = cur.fetchone()
+            self.assertIsNotNone(row)
+            self.assertIn('еженедельная', row['details'])
+            conn.close()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

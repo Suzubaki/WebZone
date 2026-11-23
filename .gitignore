@@ -5,10 +5,12 @@ __pycache__/
 *.so
 .Python
 
-# База данных
+# База данных и резервные копии
 *.db
 livestock.db
+*.sqlite
 *.sqlite3
+backups/
 
 # Отчеты
 reports/

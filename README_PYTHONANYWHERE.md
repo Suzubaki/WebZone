@@ -57,3 +57,25 @@ rm -f cattle_disposal.db cattle_disposal.db-wal cattle_disposal.db-shm
 python3 create_users.py
 ```
 После этого нажмите **Reload** на вкладке **Web**.
+
+## Автоматический бэкап 1 раз в неделю (или в месяц)
+
+В проект включён скрипт `scheduled_backup.py`, который создаёт консистентный снимок базы через SQLite Online Backup API в папку `backups/`, хранит последние 12 копий и фиксирует событие в журнале операций резервного копирования.
+
+### Настройка на PythonAnywhere (вкладка Tasks)
+На PythonAnywhere планировщик запускает задачи ежедневно, поэтому скрипт автоматически проверяет, есть ли уже копия за текущую календарную неделю (ISO), и создаёт файл только 1 раз в неделю:
+1. Откройте вкладку **Tasks** в панели PythonAnywhere.
+2. В разделе **Scheduled tasks** выберите **Daily**, укажите удобное время (например, `03:00` UTC) и введите команду:
+   ```bash
+   python3 /home/<ваш-логин>/WEB/scheduled_backup.py --weekly --keep 12
+   ```
+   *(Для ежемесячного режима можно указать `--monthly` вместо `--weekly`.)*
+3. Нажмите **Create**.
+
+### Настройка на Linux (cron) или Windows
+- **Linux (`crontab -e`, каждый понедельник в 03:00):**
+  ```cron
+  0 3 * * 1 /usr/bin/python3 /path/to/WEB/scheduled_backup.py --weekly --keep 12
+  ```
+- **Windows (Планировщик заданий):** создать еженедельную задачу (понедельник в `03:00`) с запуском `python.exe` и аргументом `E:\web\scheduled_backup.py --weekly --keep 12`.
+
