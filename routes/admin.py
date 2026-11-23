@@ -1,14 +1,15 @@
 # routes/admin.py - Системное администрирование, журнал аудита и резервные копии
-import io
+import logging
 from flask import (
     Blueprint, render_template, request, redirect, 
-    url_for, flash, session, send_file, jsonify
+    url_for, flash, session, jsonify, Response
 )
 from config import Config
 from database import get_db_connection, log_audit_event, get_all_settings, invalidate_settings_cache, run_write_transaction
 from backup import create_db_backup_bytes, restore_db_from_upload
 from .auth import login_required, admin_required
 
+logger = logging.getLogger('cattle_app')
 admin_bp = Blueprint('admin', __name__)
 
 @admin_bp.route('/reasons', methods=['GET', 'POST'])
@@ -125,7 +126,13 @@ def backup():
 @admin_required
 def download_backup():
     """Скачивание бинарного дампа SQLite базы данных"""
-    file_bytes, filename = create_db_backup_bytes()
+    try:
+        file_bytes, filename = create_db_backup_bytes()
+    except Exception as exc:
+        logger.exception("Ошибка создания резервной копии базы данных")
+        flash(f'Ошибка при создании резервной копии базы данных: {exc}', 'danger')
+        return redirect(url_for('admin.backup'))
+
     log_audit_event(
         username=session.get('username'),
         farm_name='Admin',
@@ -135,11 +142,15 @@ def download_backup():
         user_id=session.get('user_id'),
         ip_address=request.remote_addr
     )
-    return send_file(
-        io.BytesIO(file_bytes),
-        download_name=filename,
-        as_attachment=True,
-        mimetype='application/octet-stream'
+    return Response(
+        file_bytes,
+        status=200,
+        mimetype='application/octet-stream',
+        headers={
+            'Content-Disposition': f'attachment; filename="{filename}"',
+            'Content-Length': str(len(file_bytes)),
+            'Cache-Control': 'no-store',
+        }
     )
 
 @admin_bp.route('/backup/restore', methods=['POST'])
@@ -151,11 +162,16 @@ def restore_backup():
         return redirect(url_for('admin.backup'))
         
     file = request.files['backup_file']
-    if file.filename == '':
+    if not file or not file.filename:
         flash('Файл резервной копии не выбран', 'danger')
         return redirect(url_for('admin.backup'))
-        
-    success, msg = restore_db_from_upload(file, session.get('username'), request.remote_addr)
+
+    try:
+        success, msg = restore_db_from_upload(file, session.get('username'), request.remote_addr)
+    except Exception as exc:
+        logger.exception("Непредвиденная ошибка при восстановлении базы данных")
+        success, msg = False, f'Ошибка при восстановлении базы данных: {exc}'
+
     if success:
         flash(msg, 'success')
     else:

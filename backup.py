@@ -11,6 +11,7 @@ from database import (
     log_audit_event,
     init_db,
     reset_connection_state,
+    invalidate_settings_cache,
 )
 
 logger = logging.getLogger('cattle_app')
@@ -21,7 +22,9 @@ def _sqlite_online_backup(src_path, dst_path):
     src = sqlite3.connect(src_path, timeout=15.0)
     dst = sqlite3.connect(dst_path, timeout=15.0)
     try:
-        src.backup(dst)
+        src.execute('PRAGMA busy_timeout=15000;')
+        dst.execute('PRAGMA busy_timeout=15000;')
+        src.backup(dst, pages=256, sleep=0.05)
     finally:
         try:
             dst.close()
@@ -29,11 +32,15 @@ def _sqlite_online_backup(src_path, dst_path):
             src.close()
 
 
-def _remove_db_and_sidecars(db_path):
+def _remove_db_and_sidecars(db_path, ignore_errors=False):
     for suffix in ('', '-wal', '-shm'):
         target = db_path + suffix
         if os.path.exists(target):
-            os.remove(target)
+            try:
+                os.remove(target)
+            except OSError:
+                if not ignore_errors:
+                    raise
 
 
 def create_db_backup_bytes():
@@ -41,22 +48,28 @@ def create_db_backup_bytes():
     Создает целостную резервную копию базы данных SQLite с использованием SQLite Online Backup API.
     Возвращает (bytes, filename).
     """
-    source_db_path = Config.DATABASE
+    source_db_path = os.path.abspath(Config.DATABASE)
     if not os.path.exists(source_db_path):
         init_db()
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = f"agro_backup_RB_{timestamp}.sqlite"
 
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix='.sqlite')
-    os.close(tmp_fd)
+    db_dir = os.path.dirname(source_db_path) or '.'
     try:
-        _sqlite_online_backup(source_db_path, tmp_path)
+        os.makedirs(db_dir, exist_ok=True)
+        tmp_fd, tmp_path = tempfile.mkstemp(prefix='backup_', suffix='.sqlite', dir=db_dir)
+    except OSError:
+        tmp_fd, tmp_path = tempfile.mkstemp(prefix='backup_', suffix='.sqlite')
+    os.close(tmp_fd)
+
+    try:
+        with _write_lock:
+            _sqlite_online_backup(source_db_path, tmp_path)
         with open(tmp_path, 'rb') as f:
             file_bytes = f.read()
     finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        _remove_db_and_sidecars(tmp_path, ignore_errors=True)
 
     return file_bytes, filename
 
@@ -71,7 +84,8 @@ def restore_db_from_upload(upload_file, username=None, ip_address=None):
     - восстановление через SQLite Online Backup API и гарантированный откат при сбое.
     """
     temp_path = None
-    pre_restore_bak = Config.DATABASE + '.pre_restore_bak'
+    db_path = os.path.abspath(Config.DATABASE)
+    pre_restore_bak = db_path + '.pre_restore_bak'
     max_bytes = getattr(Config, 'BACKUP_MAX_CONTENT_LENGTH', 50 * 1024 * 1024)
 
     try:
@@ -91,7 +105,7 @@ def restore_db_from_upload(upload_file, username=None, ip_address=None):
             return False, 'Загруженный файл не является корректной базой данных SQLite'
         upload_file.seek(0)
 
-        db_dir = os.path.dirname(os.path.abspath(Config.DATABASE)) or '.'
+        db_dir = os.path.dirname(db_path) or '.'
         os.makedirs(db_dir, exist_ok=True)
         tmp_fd, temp_path = tempfile.mkstemp(prefix='restore_', suffix='.sqlite', dir=db_dir)
         os.close(tmp_fd)
@@ -116,35 +130,38 @@ def restore_db_from_upload(upload_file, username=None, ip_address=None):
 
         with _write_lock:
             has_pre_backup = False
-            if os.path.exists(Config.DATABASE):
+            if os.path.exists(db_path):
                 try:
-                    _remove_db_and_sidecars(pre_restore_bak)
-                    _sqlite_online_backup(Config.DATABASE, pre_restore_bak)
+                    _remove_db_and_sidecars(pre_restore_bak, ignore_errors=True)
+                    _sqlite_online_backup(db_path, pre_restore_bak)
                     has_pre_backup = True
                 except sqlite3.DatabaseError:
                     # Если текущая БД на диске повреждена, сохраняем сырую копию перед очисткой
-                    shutil.copy2(Config.DATABASE, pre_restore_bak)
+                    shutil.copy2(db_path, pre_restore_bak)
                     has_pre_backup = True
 
             try:
                 try:
-                    _sqlite_online_backup(temp_path, Config.DATABASE)
+                    _sqlite_online_backup(temp_path, db_path)
                 except sqlite3.DatabaseError:
                     # Fallback при повреждении исходной БД: удаляем БД и -wal/-shm и заменяем файлом
-                    _remove_db_and_sidecars(Config.DATABASE)
-                    shutil.copy2(temp_path, Config.DATABASE)
+                    _remove_db_and_sidecars(db_path)
+                    shutil.copy2(temp_path, db_path)
 
                 reset_connection_state()
+                invalidate_settings_cache()
                 init_db()
+                invalidate_settings_cache()
             except Exception as restore_err:
                 logger.exception("Сбой восстановления БД, выполняется откат к аварийной копии")
                 if has_pre_backup and os.path.exists(pre_restore_bak):
                     try:
-                        _sqlite_online_backup(pre_restore_bak, Config.DATABASE)
+                        _sqlite_online_backup(pre_restore_bak, db_path)
                     except sqlite3.DatabaseError:
-                        _remove_db_and_sidecars(Config.DATABASE)
-                        shutil.copy2(pre_restore_bak, Config.DATABASE)
+                        _remove_db_and_sidecars(db_path, ignore_errors=True)
+                        shutil.copy2(pre_restore_bak, db_path)
                     reset_connection_state()
+                    invalidate_settings_cache()
                 return False, f'Ошибка при восстановлении базы данных (выполнен откат): {str(restore_err)}'
 
         log_audit_event(
@@ -158,10 +175,8 @@ def restore_db_from_upload(upload_file, username=None, ip_address=None):
         return True, 'База данных успешно восстановлена из резервной копии'
 
     except Exception as e:
+        logger.exception("Ошибка при восстановлении базы данных")
         return False, f'Ошибка при восстановлении базы данных: {str(e)}'
     finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
+        if temp_path:
+            _remove_db_and_sidecars(temp_path, ignore_errors=True)

@@ -5,7 +5,7 @@ import os
 import threading
 import time
 from datetime import datetime
-from flask import Flask, abort, session, send_file, send_from_directory, Response, url_for, request, jsonify, redirect, flash
+from flask import Flask, Request as FlaskRequest, abort, session, send_file, send_from_directory, Response, url_for, request, jsonify, redirect, flash
 from flask.sessions import SecureCookieSessionInterface
 from flask_wtf.csrf import CSRFError
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -41,7 +41,23 @@ class DynamicCookieSessionInterface(SecureCookieSessionInterface):
         return super().get_cookie_samesite(flask_app)
 
 
+class RouteLimitRequest(FlaskRequest):
+    """Поддержка индивидуального max_content_length на маршрут (совместимо с Flask 2.x / 3.0.x / 3.1+)."""
+    _custom_max_content_length = None
+
+    @property
+    def max_content_length(self):
+        if self._custom_max_content_length is not None:
+            return self._custom_max_content_length
+        return super().max_content_length
+
+    @max_content_length.setter
+    def max_content_length(self, value):
+        self._custom_max_content_length = value
+
+
 app = Flask(__name__)
+app.request_class = RouteLimitRequest
 app.config.from_object(Config)
 app.session_interface = DynamicCookieSessionInterface()
 
@@ -52,7 +68,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 # чтобы CSRF-парсер формы не отклонял бэкапы > 16 МБ (лимит 50 МБ только для /backup/restore).
 @app.before_request
 def configure_route_upload_limits():
-    if request.path == '/backup/restore' and request.method == 'POST':
+    if request.path.rstrip('/') == '/backup/restore' and request.method == 'POST':
         request.max_content_length = app.config.get('BACKUP_MAX_CONTENT_LENGTH', 50 * 1024 * 1024)
 
 # Включаем CSRF-защиту Flask-WTF (управляется Config.WTF_CSRF_ENABLED = True)

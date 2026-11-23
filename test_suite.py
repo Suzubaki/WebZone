@@ -959,6 +959,58 @@ class CattleSystemTestCase(unittest.TestCase):
                 Config.DATABASE = saved_db
                 reset_connection_state()
 
+    # 15. ПРОВЕРКА HTTP-МАРШРУТОВ БЭКАПА И ВОССТАНОВЛЕНИЯ (В Т.Ч. RouteLimitRequest И WINDOWS-ОЧИСТКА)
+    def test_15_backup_download_and_restore_routes(self):
+        import backup as backup_mod
+        from app import RouteLimitRequest
+
+        self.assertTrue(RouteLimitRequest.max_content_length.fset is not None)
+
+        self.login('admin', 'AdminTest#123')
+        res_page = self.client.get('/backup')
+        self.assertEqual(res_page.status_code, 200)
+
+        res_dl = self.client.get('/backup/download')
+        self.assertEqual(res_dl.status_code, 200)
+        self.assertIn('attachment;', res_dl.headers.get('Content-Disposition', ''))
+        self.assertTrue(res_dl.data.startswith(b'SQLite format 3'))
+
+        # Восстановление через HTTP POST /backup/restore (проверка configure_route_upload_limits + RouteLimitRequest)
+        csrf_bak = self.get_csrf_token('/backup')
+        res_rest = self.client.post(
+            '/backup/restore',
+            data={
+                'csrf_token': csrf_bak,
+                'backup_file': (io.BytesIO(res_dl.data), 'backup.sqlite'),
+            },
+            content_type='multipart/form-data',
+            follow_redirects=True,
+        )
+        self.assertEqual(res_rest.status_code, 200)
+        self.assertIn('успешно восстановлена'.encode('utf-8'), res_rest.data)
+
+        # Имитация WinError 32 при удалении временного файла в create_db_backup_bytes() не должна ронять скачивание
+        orig_remove = backup_mod.os.remove
+        def _failing_remove(_path):
+            raise PermissionError('Simulated Windows file lock')
+
+        backup_mod.os.remove = _failing_remove
+        try:
+            data_bytes, fname = backup_mod.create_db_backup_bytes()
+            self.assertTrue(data_bytes.startswith(b'SQLite format 3'))
+            self.assertTrue(fname.endswith('.sqlite'))
+        finally:
+            backup_mod.os.remove = orig_remove
+            # Удаляем временные backup_*.sqlite из временной директории тестов (сама td удалится в tearDown)
+            for leftover in os.listdir(os.path.dirname(Config.DATABASE)):
+                if leftover.startswith('backup_') and leftover.endswith('.sqlite'):
+                    try:
+                        orig_remove(os.path.join(os.path.dirname(Config.DATABASE), leftover))
+                    except OSError:
+                        pass
+
+        self.logout()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
