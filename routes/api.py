@@ -1,5 +1,5 @@
 # routes/api.py - Внутреннее JSON API для динамических интерфейсов
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, session
 from database import get_db_connection, get_reasons_for_category
 from .auth import login_required
 
@@ -8,7 +8,11 @@ api_bp = Blueprint('api', __name__)
 @api_bp.route('/get_farms')
 @login_required
 def get_farms():
-    """Получение актуального списка ферм для выпадающих списков фильтров"""
+    """Получение списка доступных ферм для выпадающих списков фильтров."""
+    if session.get('user_type') != 'admin':
+        own_farm = (session.get('farm_name') or '').strip()
+        return jsonify([own_farm] if own_farm else [])
+
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''

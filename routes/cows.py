@@ -442,76 +442,132 @@ def add_multiple_cows():
     farm_name = session.get('farm_name')
 
     if request.method == 'POST':
-        cows_data = []
+        cows_data = None
+        raw_text_input = ''
         if request.is_json:
             data = request.get_json(silent=True)
             if isinstance(data, list):
                 cows_data = data
             elif isinstance(data, dict):
-                cows_data = data.get('cows_data', [])
+                cows_data = data.get('cows_data')
         else:
-            raw = request.form.get('cows_data')
-            if raw:
+            raw_text_input = request.form.get('cows_data') or ''
+            if raw_text_input.strip():
                 try:
-                    parsed = json.loads(raw)
-                    cows_data = parsed if isinstance(parsed, list) else parsed.get('cows_data', [])
+                    parsed = json.loads(raw_text_input)
+                    cows_data = parsed if isinstance(parsed, list) else (parsed.get('cows_data') if isinstance(parsed, dict) else None)
                 except Exception:
-                    cows_data = []
+                    cows_data = None
+
+        if not isinstance(cows_data, list) or len(cows_data) == 0:
+            err_msg = 'Передайте корректный непустой JSON-массив записей.'
+            if request.is_json:
+                return jsonify({'success': False, 'error': err_msg, 'added_count': 0, 'skipped_count': 0, 'errors': []}), 400
+            flash(err_msg, 'danger')
+            return render_template('add_multiple_cows.html', categories=Config.DISPOSAL_CATEGORIES, farm_name=farm_name, raw_cows_data=raw_text_input), 400
 
         today_dt = date.today()
         today_str = today_dt.strftime('%Y-%m-%d')
 
-        def _tx_batch(_conn, cursor):
-            cows_cnt = 0
-            sb_cnt = 0
-            for item in cows_data:
-                if not isinstance(item, dict):
+        # Предварительная валидация всех строк ДО открытия пишущей транзакции
+        prepared_ops = []
+        row_errors = []
+        for idx, item in enumerate(cows_data, start=1):
+            if not isinstance(item, dict):
+                row_errors.append({'row': idx, 'errors': ['Ожидается JSON-объект записи.']})
+                continue
+            form_mode = (item.get('form_mode') or '').strip().lower()
+            is_stillborn_flag = item.get('is_stillborn') in [1, '1', True, 'true', 'on']
+            item_copy = dict(item)
+            if not item_copy.get('disposal_date') and not item_copy.get('event_date'):
+                item_copy['disposal_date'] = today_str
+
+            if form_mode == 'stillborn' or is_stillborn_flag:
+                if not item_copy.get('reason') and not item_copy.get('event_type'):
+                    item_copy['reason'] = Config.STILLBIRTH_EVENT_TYPES[0]
+                cleaned_sb, errs_sb = validate_stillborn_payload(item_copy, today_date=today_dt)
+                if errs_sb:
+                    row_errors.append({'row': idx, 'errors': errs_sb})
                     continue
-                form_mode = (item.get('form_mode') or '').strip().lower()
-                is_stillborn_flag = item.get('is_stillborn') in [1, '1', True, 'true', 'on']
-                item_copy = dict(item)
-                if not item_copy.get('disposal_date') and not item_copy.get('event_date'):
-                    item_copy['disposal_date'] = today_str
+                prepared_ops.append(('stillborn', cleaned_sb))
+                continue
 
-                if form_mode == 'stillborn' or is_stillborn_flag:
-                    if not item_copy.get('reason') and not item_copy.get('event_type'):
-                        item_copy['reason'] = Config.STILLBIRTH_EVENT_TYPES[0]
-                    cleaned_sb, errs_sb = validate_stillborn_payload(item_copy, today_date=today_dt)
-                    if errs_sb:
-                        continue
-                    insert_stillborn_record(cursor, farm_name, session.get('user_id'), cleaned_sb)
-                    sb_cnt += 1
-                    continue
+            cleaned_cow, errs_cow = validate_cow_payload(item_copy, today_date=today_dt)
+            if errs_cow:
+                row_errors.append({'row': idx, 'errors': errs_cow})
+                continue
+            prepared_ops.append(('cow', cleaned_cow))
 
-                cleaned_cow, errs_cow = validate_cow_payload(item_copy, today_date=today_dt)
-                if errs_cow:
-                    continue
-                insert_cow_record(cursor, farm_name, session.get('user_id'), cleaned_cow)
-                cows_cnt += 1
+        added_cows_count = 0
+        added_stillborn_count = 0
+        if prepared_ops:
+            def _tx_batch(_conn, cursor):
+                cows_cnt = 0
+                sb_cnt = 0
+                for kind, payload in prepared_ops:
+                    if kind == 'stillborn':
+                        insert_stillborn_record(cursor, farm_name, session.get('user_id'), payload)
+                        sb_cnt += 1
+                    else:
+                        insert_cow_record(cursor, farm_name, session.get('user_id'), payload)
+                        cows_cnt += 1
 
-            if cows_cnt + sb_cnt > 0:
-                log_audit_event(
-                    username=session.get('username'),
-                    farm_name=farm_name,
-                    action='CREATE_BATCH',
-                    entity_type='COW',
-                    details=f"Пакетно добавлено: {cows_cnt} выбытий, {sb_cnt} мертворождений",
-                    user_id=session.get('user_id'),
-                    ip_address=request.remote_addr,
-                    cursor=cursor
-                )
-            return cows_cnt, sb_cnt
+                if cows_cnt + sb_cnt > 0:
+                    log_audit_event(
+                        username=session.get('username'),
+                        farm_name=farm_name,
+                        action='CREATE_BATCH',
+                        entity_type='COW',
+                        details=f"Пакетно добавлено: {cows_cnt} выбытий, {sb_cnt} мертворождений (пропущено с ошибками: {len(row_errors)})",
+                        user_id=session.get('user_id'),
+                        ip_address=request.remote_addr,
+                        cursor=cursor
+                    )
+                return cows_cnt, sb_cnt
 
-        added_cows_count, added_stillborn_count = run_write_transaction(_tx_batch)
+            added_cows_count, added_stillborn_count = run_write_transaction(_tx_batch)
+
         total_added = added_cows_count + added_stillborn_count
+        skipped_count = len(row_errors)
 
         if request.is_json:
-            return jsonify({'success': True, 'added_count': total_added, 'cows_count': added_cows_count, 'stillborn_count': added_stillborn_count})
+            payload = {
+                'success': skipped_count == 0 and total_added > 0,
+                'partial': skipped_count > 0 and total_added > 0,
+                'added_count': total_added,
+                'skipped_count': skipped_count,
+                'cows_count': added_cows_count,
+                'stillborn_count': added_stillborn_count,
+                'errors': row_errors,
+            }
+            if skipped_count > 0:
+                payload['message'] = (
+                    f"Сохранено {total_added} из {len(cows_data)} записей. "
+                    f"Отклонено строк с ошибками: {skipped_count}."
+                )
+            status_code = 200 if total_added > 0 else 400
+            return jsonify(payload), status_code
+
+        if skipped_count > 0:
+            preview_errs = '; '.join(
+                f"Строка {e['row']}: {' '.join(e['errors'])}" for e in row_errors[:5]
+            )
+            if skipped_count > 5:
+                preview_errs += f" … и ещё {skipped_count - 5}"
+            if total_added > 0:
+                flash(
+                    f'Частично добавлено записей: {total_added} (выбытие: {added_cows_count}, мертворождения: {added_stillborn_count}). '
+                    f'Отклонено строк с ошибками ({skipped_count}): {preview_errs}',
+                    'warning'
+                )
+                return redirect(url_for('cows.view_cows'))
+            flash(f'Записи не добавлены. Ошибки в строках ({skipped_count}): {preview_errs}', 'danger')
+            return render_template('add_multiple_cows.html', categories=Config.DISPOSAL_CATEGORIES, farm_name=farm_name, raw_cows_data=raw_text_input), 400
 
         flash(f'Успешно добавлено записей: {total_added} (выбытие: {added_cows_count}, мертворождения: {added_stillborn_count})', 'success')
         return redirect(url_for('cows.view_cows'))
 
-    return render_template('add_multiple_cows.html', categories=Config.DISPOSAL_CATEGORIES, farm_name=farm_name)
+    return render_template('add_multiple_cows.html', categories=Config.DISPOSAL_CATEGORIES, farm_name=farm_name, raw_cows_data='')
 
 
 def _infer_age_group_from_import(rea_low, notes_low, lact):
@@ -573,12 +629,15 @@ def import_cows():
                 csv_reader = csv.reader(stream, delimiter=';' if ';' in raw_text else ',')
                 next(csv_reader, None)
                 row_iter = enumerate(csv_reader, start=2)
-            elif filename.endswith(('.xlsx', '.xls')):
+            elif filename.endswith('.xlsx'):
                 wb = openpyxl.load_workbook(file, data_only=True)
                 ws = wb.active
                 row_iter = enumerate(ws.iter_rows(min_row=2, values_only=True), start=2)
+            elif filename.endswith('.xls'):
+                flash('Старый бинарный формат .xls не поддерживается. Пересохраните файл в Excel как .xlsx или .csv.', 'danger')
+                return redirect(request.url)
             else:
-                flash('Поддерживаются только форматы .xlsx, .xls и .csv', 'danger')
+                flash('Поддерживаются только форматы .xlsx и .csv', 'danger')
                 return redirect(request.url)
 
             for line_num, raw_cells in row_iter:
@@ -673,9 +732,17 @@ def import_cows():
                 inserted_cows, inserted_stillborn = run_write_transaction(_tx_import)
 
             if inserted_cows or inserted_stillborn:
-                flash(f'Успешно импортировано записей: выбытие — {inserted_cows}, мертворождения/аборты — {inserted_stillborn}!', 'success')
                 if errors:
-                    flash(f'Внимание: пропущено строк с ошибками: {len(errors)}', 'warning')
+                    preview = '; '.join(errors[:5])
+                    if len(errors) > 5:
+                        preview += f' … и ещё {len(errors) - 5}'
+                    flash(
+                        f'Частично импортировано записей: выбытие — {inserted_cows}, мертворождения/аборты — {inserted_stillborn}. '
+                        f'Пропущено строк с ошибками ({len(errors)}): {preview}',
+                        'warning'
+                    )
+                else:
+                    flash(f'Успешно импортировано записей: выбытие — {inserted_cows}, мертворождения/аборты — {inserted_stillborn}!', 'success')
                 return redirect(url_for('cows.view_cows'))
 
         flash('В файле не найдено корректных строк для импорта.', 'danger')

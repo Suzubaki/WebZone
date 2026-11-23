@@ -58,17 +58,21 @@ class Config:
     SESSION_COOKIE_SAMESITE = 'Lax'
     PERMANENT_SESSION_LIFETIME = timedelta(hours=8)
 
-    # Настройки CSRF-защиты (включена по умолчанию; корректно работает за ProxyFix)
+    # Настройки CSRF-защиты (время жизни согласовано с длительностью сессии; корректно работает за ProxyFix)
     WTF_CSRF_ENABLED = os.environ.get('WTF_CSRF_ENABLED', 'True').lower() not in ('false', '0', 'no')
-    WTF_CSRF_TIME_LIMIT = 31536000  # 1 год (привязано к сессии)
+    WTF_CSRF_TIME_LIMIT = int(PERMANENT_SESSION_LIFETIME.total_seconds())
     WTF_CSRF_SSL_STRICT = False     # Корректная работа за reverse-proxy с X-Forwarded-Proto
+
+    # Единая политика паролей
+    PASSWORD_MIN_LENGTH = 8
 
     # База данных SQLite
     BASE_DIR = BASE_DIR
     DATABASE = os.environ.get('DATABASE_PATH') or os.path.join(BASE_DIR, 'cattle_disposal.db')
 
-    # Максимальный размер загружаемого файла (16 MB)
+    # Максимальный размер обычной загрузки (16 MB) и загрузки резервной копии БД (50 MB)
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024
+    BACKUP_MAX_CONTENT_LENGTH = 50 * 1024 * 1024
 
     # Организационные и справочные значения по умолчанию
     DEFAULT_ORG_NAME = 'ОАО «Новая Припять»'

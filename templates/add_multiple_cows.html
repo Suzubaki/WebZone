@@ -22,7 +22,7 @@
                         <textarea class="form-control" id="cows_data" name="cows_data" rows="8" placeholder='[
   {"category": "падёж", "reason": "Острая тимпания рубца", "disposal_date": "{{ current_year }}-01-15", "is_pregnant": 1, "gestation_days": 180},
   {"category": "выбраковка", "reason": "Агалактия (потеря молочной продуктивности)", "disposal_date": "{{ current_year }}-01-15", "is_pregnant": 0}
-]' required></textarea>
+]' required>{{ raw_cows_data or '' }}</textarea>
                     </div>
                     
                     <div class="d-grid gap-2 d-md-flex justify-content-md-end">

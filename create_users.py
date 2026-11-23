@@ -20,6 +20,16 @@ def _write_initial_credentials(lines):
         return None
 
 
+def _generate_compliant_password(nbytes=12):
+    """Генерирует случайный пароль, гарантированно удовлетворяющий политике паролей."""
+    token = secrets.token_urlsafe(nbytes)
+    if not any(ch.isalpha() for ch in token):
+        token += 'A'
+    if not any(ch.isdigit() for ch in token):
+        token += '7'
+    return token
+
+
 def create_default_users(include_demo_farms=False):
     """
     Создаёт первичного администратора ТОЛЬКО если таблица users пуста.
@@ -41,17 +51,17 @@ def create_default_users(include_demo_farms=False):
     admin_pwd = (os.environ.get('INITIAL_ADMIN_PASSWORD') or '').strip()
     generated = False
     if not admin_pwd:
-        admin_pwd = secrets.token_urlsafe(12)
+        admin_pwd = _generate_compliant_password(12)
         generated = True
 
-    ok, msg = register_user('admin', admin_pwd, 'admin', must_change_password=False)
-    lines = [f"Создан первичный администратор: username=admin"]
+    ok, msg = register_user('admin', admin_pwd, 'admin', must_change_password=True)
+    lines = ["Создан первичный администратор: username=admin (потребуется смена пароля при первом входе)"]
     if generated and ok:
-        lines.append(f"Пароль admin: {admin_pwd}")
+        lines.append(f"Временный пароль admin: {admin_pwd}")
 
     if include_demo_farms and ok:
         for idx in (1, 2):
-            f_pwd = secrets.token_urlsafe(10)
+            f_pwd = _generate_compliant_password(10)
             f_ok, _ = register_user(f'farm{idx}', f_pwd, 'farm', f'Ферма {idx}', must_change_password=True)
             if f_ok:
                 lines.append(f"Временный пароль farm{idx} (Ферма {idx}): {f_pwd}")

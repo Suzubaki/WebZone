@@ -1,7 +1,6 @@
 # check_system.py - Скрипт автоматической самодиагностики системы
 import os
 import sys
-import sqlite3
 
 def run_checks():
     print("=" * 60)
@@ -19,6 +18,7 @@ def run_checks():
         'routes/reports.py',
         'routes/admin.py',
         'routes/api.py',
+        'routes/stillborn.py',
         'extensions.py'
     ]
     for f in expected_files:
@@ -28,23 +28,30 @@ def run_checks():
             print(f"  [ОШИБКА] Не найден файл: {f}")
             all_ok = False
 
-    # 2. Проверка базы данных и WAL-режима
-    print("\n[2] Проверка базы данных SQLite и WAL-режима...")
+    # 2. Проверка базы данных, WAL-режима, внешних ключей и индексов
+    print("\n[2] Проверка базы данных SQLite, WAL-режима и целостности...")
     try:
         from database import init_db, get_db_connection
         init_db()
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Режим журнала
         cursor.execute("PRAGMA journal_mode;")
         mode = cursor.fetchone()[0]
         if mode.lower() == 'wal':
             print(f"  [OK] Режим журнала SQLite: {mode.upper()} (параллельное чтение активно)")
         else:
-            print(f"  [ПРЕДУПРЕЖДЕНИЕ] Текущий режим: {mode} (ожидался WAL)")
+            print(f"  [ОШИБКА] Текущий режим журнала: {mode} (ожидался WAL)")
+            all_ok = False
 
-        # Проверка индексов таблицы cows
+        cursor.execute("PRAGMA foreign_keys;")
+        fk_state = cursor.fetchone()[0]
+        if fk_state == 1:
+            print("  [OK] Контроль внешних ключей SQLite: ВКЛЮЧЕН (PRAGMA foreign_keys=ON)")
+        else:
+            print("  [ОШИБКА] Контроль внешних ключей SQLite отключен")
+            all_ok = False
+
         cursor.execute("PRAGMA index_list(cows);")
         indexes = [row['name'] for row in cursor.fetchall()]
         expected_indexes = [
@@ -54,25 +61,26 @@ def run_checks():
             'idx_cows_ear_tag',
             'idx_cows_disposal_date'
         ]
-        
+
         found_count = 0
         for idx in expected_indexes:
             if idx in indexes:
                 print(f"  [OK] Индекс активен: {idx}")
                 found_count += 1
             else:
-                print(f"  [!] Индекс отсутствует: {idx}")
-        
+                print(f"  [ОШИБКА] Индекс отсутствует: {idx}")
+                all_ok = False
+
         if found_count == len(expected_indexes):
-            print(f"  [OK] Все {found_count} индексов успешно оптимизируют запросы!")
+            print(f"  [OK] Все {found_count} ключевых индексов успешно оптимизируют запросы!")
 
         conn.close()
     except Exception as e:
         print(f"  [ОШИБКА БД]: {e}")
         all_ok = False
 
-    # 3. Проверка регистрации маршрутов Flask
-    print("\n[3] Проверка регистрации маршрутов приложения...")
+    # 3. Проверка регистрации и фактической работы маршрутов Flask
+    print("\n[3] Проверка регистрации и отклика маршрутов приложения...")
     try:
         from app import app
         routes = [r.rule for r in app.url_map.iter_rules()]
@@ -89,6 +97,20 @@ def run_checks():
             else:
                 print(f"  [ОШИБКА] Маршрут отсутствует: {kr}")
                 all_ok = False
+
+        with app.test_client() as client:
+            checks = [
+                ('GET /login', client.get('/login'), 200),
+                ('GET /img/logo.svg', client.get('/img/logo.svg'), 200),
+                ('GET /dashboard (без входа -> редирект)', client.get('/dashboard', follow_redirects=False), 302),
+                ('GET /img/../../config.py (защита Path Traversal)', client.get('/img/../../config.py'), 404),
+            ]
+            for label, resp, expected_code in checks:
+                if resp.status_code == expected_code:
+                    print(f"  [OK] {label}: HTTP {resp.status_code}")
+                else:
+                    print(f"  [ОШИБКА] {label}: ожидался HTTP {expected_code}, получен {resp.status_code}")
+                    all_ok = False
     except Exception as e:
         print(f"  [ОШИБКА ПРИЛОЖЕНИЯ]: {e}")
         all_ok = False
@@ -108,7 +130,8 @@ def run_checks():
         print(" ИТОГ: ВСЕ ТЕСТЫ ПРОЙДЕНЫ УСПЕШНО!")
         print(" Приложение полностью готово к запуску: python app.py")
     else:
-        print(" ИТОГ: Обнаружены замечания. Проверьте вывод выше.")
+        print(" ИТОГ: Обнаружены ошибки. Проверьте вывод выше.")
+        sys.exit(1)
     print("=" * 60)
 
 if __name__ == '__main__':

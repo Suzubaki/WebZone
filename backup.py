@@ -1,16 +1,45 @@
 # backup.py - Модуль резервного копирования и восстановления базы данных
+import logging
 import os
 import tempfile
 import shutil
 import sqlite3
 from datetime import datetime
 from config import Config
-from database import log_audit_event, init_db, invalidate_settings_cache
+from database import (
+    _write_lock,
+    log_audit_event,
+    init_db,
+    reset_connection_state,
+)
+
+logger = logging.getLogger('cattle_app')
+
+
+def _sqlite_online_backup(src_path, dst_path):
+    """Выполняет атомарное копирование SQLite-базы (включая страницы WAL) через Online Backup API."""
+    src = sqlite3.connect(src_path, timeout=15.0)
+    dst = sqlite3.connect(dst_path, timeout=15.0)
+    try:
+        src.backup(dst)
+    finally:
+        try:
+            dst.close()
+        finally:
+            src.close()
+
+
+def _remove_db_and_sidecars(db_path):
+    for suffix in ('', '-wal', '-shm'):
+        target = db_path + suffix
+        if os.path.exists(target):
+            os.remove(target)
+
 
 def create_db_backup_bytes():
     """
-    Создает целостную резервную копию базы данных SQLite с использованием SQLite Online Backup API
-    Возвращает (bytes, filename)
+    Создает целостную резервную копию базы данных SQLite с использованием SQLite Online Backup API.
+    Возвращает (bytes, filename).
     """
     source_db_path = Config.DATABASE
     if not os.path.exists(source_db_path):
@@ -22,11 +51,7 @@ def create_db_backup_bytes():
     tmp_fd, tmp_path = tempfile.mkstemp(suffix='.sqlite')
     os.close(tmp_fd)
     try:
-        src = sqlite3.connect(source_db_path)
-        dst = sqlite3.connect(tmp_path)
-        src.backup(dst)
-        dst.close()
-        src.close()
+        _sqlite_online_backup(source_db_path, tmp_path)
         with open(tmp_path, 'rb') as f:
             file_bytes = f.read()
     finally:
@@ -35,64 +60,93 @@ def create_db_backup_bytes():
 
     return file_bytes, filename
 
+
 def restore_db_from_upload(upload_file, username=None, ip_address=None):
     """
-    Восстановление базы данных из загруженного файла .db/.sqlite с валидацией
+    Безопасное восстановление базы данных из загруженного файла .db/.sqlite:
+    - проверка размера и заголовка SQLite;
+    - полная проверка целостности (PRAGMA integrity_check) и обязательных таблиц;
+    - блокировка записи (_write_lock) на время замены;
+    - аварийная резервная копия текущей БД через SQLite Online Backup API (с учётом WAL);
+    - восстановление через SQLite Online Backup API и гарантированный откат при сбое.
     """
+    temp_path = None
+    pre_restore_bak = Config.DATABASE + '.pre_restore_bak'
+    max_bytes = getattr(Config, 'BACKUP_MAX_CONTENT_LENGTH', 50 * 1024 * 1024)
+
     try:
-        # Проверка размера загружаемого файла (лимит 50 МБ)
         upload_file.seek(0, os.SEEK_END)
         file_size = upload_file.tell()
         upload_file.seek(0)
-        
-        if file_size > 50 * 1024 * 1024:
-            return False, 'Файл резервной копии слишком велик (максимум 50 МБ)'
+
+        if file_size > max_bytes:
+            limit_mb = max_bytes // (1024 * 1024)
+            return False, f'Файл резервной копии слишком велик (максимум {limit_mb} МБ)'
         if file_size < 100:
             return False, 'Файл резервной копии поврежден или пуст'
 
-        # Читаем первые 16 байт для проверки SQLite заголовка: "SQLite format 3\000"
         header = upload_file.read(16)
         if not header.startswith(b'SQLite format 3'):
             upload_file.seek(0)
             return False, 'Загруженный файл не является корректной базой данных SQLite'
-            
         upload_file.seek(0)
-        
-        # Сохраняем во временный файл для проверки таблиц
-        temp_path = Config.DATABASE + '.restore_temp'
-        upload_file.save(temp_path)
-        
-        # Проверяем целостность и список таблиц
-        test_conn = sqlite3.connect(temp_path)
-        test_cursor = test_conn.cursor()
-        
-        # Проверка целостности SQLite
-        test_cursor.execute("PRAGMA quick_check")
-        check_result = test_cursor.fetchone()
-        if not check_result or check_result[0] != 'ok':
-            test_conn.close()
-            os.remove(temp_path)
-            return False, 'Файл резервной копии поврежден (PRAGMA quick_check failed)'
 
-        test_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = [r[0] for r in test_cursor.fetchall()]
-        test_conn.close()
-        
+        db_dir = os.path.dirname(os.path.abspath(Config.DATABASE)) or '.'
+        os.makedirs(db_dir, exist_ok=True)
+        tmp_fd, temp_path = tempfile.mkstemp(prefix='restore_', suffix='.sqlite', dir=db_dir)
+        os.close(tmp_fd)
+        upload_file.save(temp_path)
+
+        # Проверяем целостность и наличие обязательных таблиц до захвата блокировки записи
+        test_conn = sqlite3.connect(temp_path, timeout=15.0)
+        try:
+            test_cursor = test_conn.cursor()
+            test_cursor.execute("PRAGMA integrity_check")
+            check_result = test_cursor.fetchone()
+            if not check_result or check_result[0] != 'ok':
+                return False, 'Файл резервной копии поврежден (PRAGMA integrity_check failed)'
+
+            test_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = {r[0] for r in test_cursor.fetchall()}
+        finally:
+            test_conn.close()
+
         if 'cows' not in tables or 'users' not in tables:
-            os.remove(temp_path)
             return False, 'В резервной копии отсутствуют обязательные таблицы (cows, users)'
-            
-        # Делаем аварийную копию текущей БД перед заменой
-        if os.path.exists(Config.DATABASE):
-            shutil.copy2(Config.DATABASE, Config.DATABASE + '.pre_restore_bak')
-            
-        # Заменяем текущую БД
-        shutil.move(temp_path, Config.DATABASE)
-        
-        # Применяем миграции если файл был из старой версии
-        init_db()
-        invalidate_settings_cache()
-        
+
+        with _write_lock:
+            has_pre_backup = False
+            if os.path.exists(Config.DATABASE):
+                try:
+                    _remove_db_and_sidecars(pre_restore_bak)
+                    _sqlite_online_backup(Config.DATABASE, pre_restore_bak)
+                    has_pre_backup = True
+                except sqlite3.DatabaseError:
+                    # Если текущая БД на диске повреждена, сохраняем сырую копию перед очисткой
+                    shutil.copy2(Config.DATABASE, pre_restore_bak)
+                    has_pre_backup = True
+
+            try:
+                try:
+                    _sqlite_online_backup(temp_path, Config.DATABASE)
+                except sqlite3.DatabaseError:
+                    # Fallback при повреждении исходной БД: удаляем БД и -wal/-shm и заменяем файлом
+                    _remove_db_and_sidecars(Config.DATABASE)
+                    shutil.copy2(temp_path, Config.DATABASE)
+
+                reset_connection_state()
+                init_db()
+            except Exception as restore_err:
+                logger.exception("Сбой восстановления БД, выполняется откат к аварийной копии")
+                if has_pre_backup and os.path.exists(pre_restore_bak):
+                    try:
+                        _sqlite_online_backup(pre_restore_bak, Config.DATABASE)
+                    except sqlite3.DatabaseError:
+                        _remove_db_and_sidecars(Config.DATABASE)
+                        shutil.copy2(pre_restore_bak, Config.DATABASE)
+                    reset_connection_state()
+                return False, f'Ошибка при восстановлении базы данных (выполнен откат): {str(restore_err)}'
+
         log_audit_event(
             username=username or 'Admin',
             farm_name='Admin',
@@ -102,6 +156,12 @@ def restore_db_from_upload(upload_file, username=None, ip_address=None):
             ip_address=ip_address
         )
         return True, 'База данных успешно восстановлена из резервной копии'
-        
+
     except Exception as e:
         return False, f'Ошибка при восстановлении базы данных: {str(e)}'
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass

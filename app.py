@@ -2,9 +2,10 @@
 import gzip
 import logging
 import os
+import threading
 import time
 from datetime import datetime
-from flask import Flask, session, send_file, send_from_directory, Response, url_for, request, jsonify, redirect, flash
+from flask import Flask, abort, session, send_file, send_from_directory, Response, url_for, request, jsonify, redirect, flash
 from flask.sessions import SecureCookieSessionInterface
 from flask_wtf.csrf import CSRFError
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -47,17 +48,36 @@ app.session_interface = DynamicCookieSessionInterface()
 # Корректная обработка X-Forwarded-* заголовков за reverse proxy (PythonAnywhere / Nginx)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+# Регистрируем лимит размера для восстановления БД ДО csrf.init_app(app),
+# чтобы CSRF-парсер формы не отклонял бэкапы > 16 МБ (лимит 50 МБ только для /backup/restore).
+@app.before_request
+def configure_route_upload_limits():
+    if request.path == '/backup/restore' and request.method == 'POST':
+        request.max_content_length = app.config.get('BACKUP_MAX_CONTENT_LENGTH', 50 * 1024 * 1024)
+
 # Включаем CSRF-защиту Flask-WTF (управляется Config.WTF_CSRF_ENABLED = True)
 csrf.init_app(app)
 
-# Автоматическая инициализация структуры и миграций БД
-try:
-    with app.app_context():
+_app_init_lock = threading.Lock()
+_initialized_db_path = None
+
+
+def ensure_app_initialized():
+    """
+    Ленивая и строго проверяемая инициализация БД для текущего Config.DATABASE.
+    Не выполняется при импорте модуля (чтобы тесты не затрагивали рабочую БД)
+    и не скрывает ошибки инициализации.
+    """
+    global _initialized_db_path
+    if _initialized_db_path == Config.DATABASE:
+        return
+    with _app_init_lock:
+        if _initialized_db_path == Config.DATABASE:
+            return
         init_db()
         from create_users import create_default_users
         create_default_users()
-except Exception as _init_err:
-    logger.warning("Предупреждение при инициализации базы данных: %s", _init_err)
+        _initialized_db_path = Config.DATABASE
 
 _FALLBACK_LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="#1b5e20"/><text x="32" y="39" font-family="sans-serif" font-size="22" font-weight="bold" fill="#ffd54f" text-anchor="middle">НП</text></svg>'
 NEW_LOGO_REL = os.path.join('public', 'assets', 'aistudio', '__________________________________f05f89ea.png')
@@ -75,21 +95,38 @@ def _get_new_logo_path():
     return None
 
 
+_ALLOWED_LOGO_FILES = frozenset({'logo.jpg', 'logo.jpeg', 'logo.png', 'logo.svg'})
+
+
 def _serve_logo(filename):
-    if filename.startswith('logo.'):
-        new_logo = _get_new_logo_path()
-        if new_logo:
-            return send_file(new_logo, mimetype='image/png')
+    clean_name = (filename or '').strip()
+    if (
+        not clean_name
+        or '/' in clean_name
+        or '\\' in clean_name
+        or '..' in clean_name
+        or clean_name.lower() not in _ALLOWED_LOGO_FILES
+    ):
+        abort(404)
+
+    new_logo = _get_new_logo_path()
+    if new_logo:
+        return send_file(new_logo, mimetype='image/png')
+
     search_dirs = [
         os.path.join(app.root_path, 'static', 'img'),
         os.path.join(app.root_path, 'public', 'img'),
         os.path.join(app.root_path, 'img')
     ]
+    lower_name = clean_name.lower()
     for d in search_dirs:
-        candidate = os.path.join(d, filename)
+        candidate = os.path.join(d, clean_name)
         if os.path.exists(candidate) and os.path.isfile(candidate):
-            mimetype = 'image/jpeg' if filename.endswith(('.jpg', '.jpeg')) else ('image/png' if filename.endswith('.png') else 'image/svg+xml')
-            return send_file(candidate, mimetype=mimetype)
+            mimetype = (
+                'image/jpeg' if lower_name.endswith(('.jpg', '.jpeg'))
+                else ('image/png' if lower_name.endswith('.png') else 'image/svg+xml')
+            )
+            return send_from_directory(d, clean_name, mimetype=mimetype)
     return Response(_FALLBACK_LOGO_SVG, mimetype='image/svg+xml')
 
 
@@ -212,6 +249,7 @@ def anti_ddos_guard():
 def sync_current_user_session():
     if request.path.startswith(_STATIC_CACHE_PREFIXES):
         return None
+    ensure_app_initialized()
     if 'user_id' in session:
         now = time.time()
         last_sync = session.get('_user_sync_ts', 0)
@@ -223,7 +261,11 @@ def sync_current_user_session():
             session['farm_name'] = user.farm_name
             session['username'] = user.username
             session['user_type'] = user.user_type
+            session['must_change_password'] = bool(user.must_change_password)
             session['_user_sync_ts'] = now
+
+        if session.get('must_change_password') and request.path not in ('/first_login_password', '/logout'):
+            return redirect(url_for('auth.first_login_password'))
 
 
 @app.after_request
@@ -351,10 +393,13 @@ def override_url_for():
         resolved = aliases.get(endpoint_name, endpoint_name)
         try:
             return url_for(resolved, **values)
-        except Exception:
+        except Exception as first_err:
             try:
                 return url_for(endpoint_name, **values)
-            except Exception:
+            except Exception as second_err:
+                logger.error("Ошибка построения URL для endpoint=%r (%s / %s)", endpoint_name, first_err, second_err)
+                if app.debug or app.testing:
+                    raise
                 return default
 
     def custom_url_for(endpoint, **values):
@@ -362,8 +407,12 @@ def override_url_for():
 
     custom_url_for.__doc__ = "custom_url_for helper function"
     try:
+        ensure_app_initialized()
         settings = get_all_settings()
     except Exception:
+        logger.exception("Не удалось загрузить настройки организации в context_processor")
+        if app.debug or app.testing:
+            raise
         settings = {}
     org_name = settings.get('farm_org_name') or Config.DEFAULT_ORG_NAME
     org_unp = settings.get('farm_unp') or Config.DEFAULT_UNP
@@ -378,9 +427,7 @@ def override_url_for():
 
 
 if __name__ == '__main__':
-    init_db()
-    from create_users import create_default_users
-    create_default_users()
+    ensure_app_initialized()
     port = int(os.environ.get('PORT') or os.environ.get('DEFAULT_APP_PORT') or 3000)
     is_debug = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1')
     app.run(host='0.0.0.0', port=port, debug=is_debug, threaded=True)

@@ -131,11 +131,19 @@ def compute_lactation_phase(age_group, lactation_days, lactation=None):
 def _parse_bounded_int(raw, label, min_val, max_val, errors):
     if raw is None or str(raw).strip() == '':
         return None
+    if isinstance(raw, bool):
+        errors.append(f'Поле «{label}» должно быть целым числом.')
+        return None
+    txt = str(raw).strip().replace('\u00a0', '').replace(' ', '').replace(',', '.')
     try:
-        val = int(float(str(raw).strip().replace(',', '.')))
+        fval = float(txt)
     except (ValueError, TypeError):
         errors.append(f'Поле «{label}» должно быть целым числом.')
         return None
+    if not math.isfinite(fval) or not fval.is_integer():
+        errors.append(f'Поле «{label}» должно быть целым числом.')
+        return None
+    val = int(fval)
     if val < min_val or val > max_val:
         errors.append(f'Поле «{label}» должно быть в диапазоне от {min_val} до {max_val}.')
         return None
@@ -204,6 +212,8 @@ def validate_cow_payload(data, today_date=None):
         norm_ag = normalize_age_group(age_group, lactation)
         if norm_ag in Config.AGE_GROUPS:
             age_group = norm_ag
+        else:
+            errors.append(f'Недопустимая половозрастная группа (ПВГ): «{raw_ag}».')
 
     ear_tag = (data.get('ear_tag') or '').strip()[:50] or None
     breed = (data.get('breed') or '').strip()[:80] or Config.DEFAULT_BREED

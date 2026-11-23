@@ -31,6 +31,15 @@ def invalidate_settings_cache():
         _settings_cache_db = None
 
 
+def reset_connection_state():
+    """Сбрасывает кэш проверок WAL/индексов и настроек (после восстановления или смены БД)."""
+    global _indexes_checked, _wal_checked_for_db
+    with _init_lock:
+        _indexes_checked = False
+        _wal_checked_for_db = None
+    invalidate_settings_cache()
+
+
 def _create_indexes(cursor):
     """Единое определение оптимальных индексов без избыточного дублирования."""
     # Основные индексы таблицы cows (включая ожидаемые check_system.py)
@@ -102,6 +111,7 @@ def get_db_connection(isolation_level=''):
                 _wal_checked_for_db = Config.DATABASE
                 _indexes_checked = False
                 need_indexes = True
+    cursor.execute('PRAGMA foreign_keys=ON;')
     cursor.execute('PRAGMA synchronous=NORMAL;')
     cursor.execute('PRAGMA temp_store=MEMORY;')
     cursor.execute('PRAGMA cache_size=-10000;')
@@ -304,8 +314,8 @@ def init_db():
             created_by INTEGER,
             updated_at TIMESTAMP,
             updated_by INTEGER,
-            FOREIGN KEY (created_by) REFERENCES users (id),
-            FOREIGN KEY (updated_by) REFERENCES users (id)
+            FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL,
+            FOREIGN KEY (updated_by) REFERENCES users (id) ON DELETE SET NULL
         )
     ''')
 
@@ -391,8 +401,8 @@ def init_db():
             created_by INTEGER,
             updated_at TIMESTAMP,
             updated_by INTEGER,
-            FOREIGN KEY (created_by) REFERENCES users (id),
-            FOREIGN KEY (updated_by) REFERENCES users (id)
+            FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL,
+            FOREIGN KEY (updated_by) REFERENCES users (id) ON DELETE SET NULL
         )
     ''')
 
@@ -402,6 +412,16 @@ def init_db():
             farm_name TEXT PRIMARY KEY,
             last_cow_number INTEGER DEFAULT 0,
             last_stillborn_number INTEGER DEFAULT 0
+        )
+    ''')
+
+    # 8. Таблица блокировок брутфорса авторизации (общая между воркерами WSGI)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS auth_lockouts (
+            ip TEXT PRIMARY KEY,
+            fail_count INTEGER NOT NULL DEFAULT 0,
+            last_attempt REAL NOT NULL,
+            locked_until REAL NOT NULL DEFAULT 0
         )
     ''')
 
@@ -516,8 +536,117 @@ def init_db():
     conn.commit()
     conn.close()
 
+    _migrate_fk_on_delete_set_null()
     sync_farm_data()
     optimize_database_indexes()
+
+
+def _migrate_fk_on_delete_set_null():
+    """
+    Обновляет внешние ключи created_by/updated_by в существующих таблицах cows и stillbirth_records
+    до ON DELETE SET NULL и очищает осиротевшие ссылки, чтобы PRAGMA foreign_keys=ON работал корректно.
+    """
+    conn = sqlite3.connect(Config.DATABASE, timeout=15.0, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    try:
+        cur.execute('PRAGMA busy_timeout=10000;')
+        for tbl, create_new_sql in (
+            (
+                'cows',
+                '''
+                CREATE TABLE cows_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cow_id TEXT NOT NULL,
+                    ear_tag TEXT,
+                    farm_name TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    disposal_date DATE NOT NULL,
+                    lactation INTEGER,
+                    weight REAL,
+                    notes TEXT,
+                    age_group TEXT,
+                    lactation_days INTEGER,
+                    lactation_phase TEXT,
+                    pathology_system TEXT,
+                    breed TEXT,
+                    milk_yield REAL,
+                    book_value REAL,
+                    is_pregnant INTEGER DEFAULT 0,
+                    gestation_days INTEGER DEFAULT 0,
+                    is_stillborn INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_by INTEGER,
+                    updated_at TIMESTAMP,
+                    updated_by INTEGER,
+                    FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL,
+                    FOREIGN KEY (updated_by) REFERENCES users (id) ON DELETE SET NULL
+                )
+                '''
+            ),
+            (
+                'stillbirth_records',
+                '''
+                CREATE TABLE stillbirth_records_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    record_code TEXT NOT NULL,
+                    farm_name TEXT NOT NULL,
+                    event_date DATE NOT NULL,
+                    mother_tag TEXT,
+                    mother_group TEXT,
+                    event_type TEXT NOT NULL,
+                    fetus_sex TEXT,
+                    fetus_weight REAL,
+                    gestation_days INTEGER DEFAULT 0,
+                    cause TEXT NOT NULL,
+                    mother_condition TEXT,
+                    attendant TEXT,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_by INTEGER,
+                    updated_at TIMESTAMP,
+                    updated_by INTEGER,
+                    FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL,
+                    FOREIGN KEY (updated_by) REFERENCES users (id) ON DELETE SET NULL
+                )
+                '''
+            ),
+        ):
+            cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?", (tbl,))
+            row = cur.fetchone()
+            if not row or not row['sql']:
+                continue
+            ddl_upper = row['sql'].upper()
+            if 'ON DELETE SET NULL' in ddl_upper:
+                continue
+
+            cur.execute(f"PRAGMA table_info({tbl})")
+            cols = [r['name'] for r in cur.fetchall()]
+            col_list = ', '.join(cols)
+
+            cur.execute('PRAGMA foreign_keys=OFF;')
+            cur.execute('BEGIN IMMEDIATE;')
+            try:
+                cur.execute(f"UPDATE {tbl} SET created_by = NULL WHERE created_by IS NOT NULL AND created_by NOT IN (SELECT id FROM users)")
+                cur.execute(f"UPDATE {tbl} SET updated_by = NULL WHERE updated_by IS NOT NULL AND updated_by NOT IN (SELECT id FROM users)")
+                cur.execute(f"DROP TABLE IF EXISTS {tbl}_new")
+                cur.execute(create_new_sql)
+                cur.execute(f"INSERT INTO {tbl}_new ({col_list}) SELECT {col_list} FROM {tbl}")
+                cur.execute(f"DROP TABLE {tbl}")
+                cur.execute(f"ALTER TABLE {tbl}_new RENAME TO {tbl}")
+                cur.execute('COMMIT;')
+            except Exception:
+                try:
+                    cur.execute('ROLLBACK;')
+                except Exception:
+                    pass
+                raise
+            finally:
+                cur.execute('PRAGMA foreign_keys=ON;')
+    finally:
+        cur.close()
+        conn.close()
 
 
 def get_all_settings():

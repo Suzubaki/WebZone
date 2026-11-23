@@ -1,7 +1,18 @@
 # auth.py - Аутентификация и управление пользователями
 import sqlite3
+from config import Config
 from database import get_db_connection, run_write_transaction
 from models import User
+
+
+def validate_password_policy(password):
+    """Единая проверка надёжности пароля для регистрации, смены и админ-обновления."""
+    min_len = getattr(Config, 'PASSWORD_MIN_LENGTH', 8)
+    if not password or len(password) < min_len:
+        return False, f'Пароль должен содержать не менее {min_len} символов'
+    if not any(ch.isalpha() for ch in password) or not any(ch.isdigit() for ch in password):
+        return False, 'Пароль должен содержать хотя бы одну букву и одну цифру'
+    return True, ''
 
 
 def _row_to_user(row):
@@ -58,8 +69,9 @@ def register_user(username, password, user_type, farm_name=None, must_change_pas
     username = (username or '').strip()
     if not username:
         return False, 'Укажите имя пользователя'
-    if not password or len(password) < 6:
-        return False, 'Пароль должен содержать не менее 6 символов'
+    pwd_ok, pwd_msg = validate_password_policy(password)
+    if not pwd_ok:
+        return False, pwd_msg
     if user_type not in ('admin', 'farm'):
         return False, 'Недопустимый тип пользователя'
     if user_type == 'farm' and not (farm_name or '').strip():
@@ -87,8 +99,9 @@ def register_user(username, password, user_type, farm_name=None, must_change_pas
 
 def change_user_password(user_id, new_password):
     """Смена пароля пользователем и снятие флага обязательной смены пароля."""
-    if not new_password or len(new_password) < 8:
-        return False, 'Новый пароль должен содержать не менее 8 символов'
+    pwd_ok, pwd_msg = validate_password_policy(new_password)
+    if not pwd_ok:
+        return False, pwd_msg
 
     password_hash = User.create_password_hash(new_password)
     try:
@@ -138,8 +151,9 @@ def update_user(user_id, username, password=None, user_type=None, farm_name=None
         params = [username]
 
         if password:
-            if len(password) < 6:
-                return False, 'Пароль должен содержать не менее 6 символов'
+            pwd_ok, pwd_msg = validate_password_policy(password)
+            if not pwd_ok:
+                return False, pwd_msg
             password_hash = User.create_password_hash(password)
             update_fields.append('password_hash = ?')
             params.append(password_hash)

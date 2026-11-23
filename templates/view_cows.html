@@ -218,7 +218,7 @@
                                 <td>{{ cow.farm_name }}</td>
                                 <td><small class="badge bg-light text-dark border">{{ cow.age_group or 'Основное' }}</small></td>
                                 <td>
-                                    {% if cow.lactation_phase and ('Молодняк' in cow.lactation_phase or ('age_group' in cow and ('Телят' in cow.age_group or 'Молодняк' in cow.age_group or 'Бычки' in cow.age_group))) %}
+                                    {% if cow.lactation_phase and ('Молодняк' in cow.lactation_phase or (cow.age_group and ('Телят' in cow.age_group or 'Молодняк' in cow.age_group or 'Бычки' in cow.age_group))) %}
                                         <span class="badge bg-light text-muted border">Молодняк</span>
                                     {% else %}
                                         <div class="small fw-semibold">

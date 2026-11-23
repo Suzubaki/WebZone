@@ -8,7 +8,7 @@ import unittest
 from datetime import datetime, timedelta
 
 from config import Config
-from database import get_db_connection, init_db, get_setting, invalidate_settings_cache
+from database import get_db_connection, init_db, get_setting, reset_connection_state
 from auth import register_user, update_user, authenticate_user
 from charts import get_dashboard_full_data
 
@@ -17,17 +17,19 @@ class CattleSystemTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._orig_db = Config.DATABASE
-        cls._orig_testing = None
+        cls._orig_env_db = os.environ.get('DATABASE_PATH')
         cls._tmp_dir = tempfile.TemporaryDirectory()
         cls._test_db_path = os.path.join(cls._tmp_dir.name, 'test_cattle.db')
+
+        # Переключаем Config.DATABASE и окружение ДО импорта app, чтобы не затрагивать рабочую БД
+        os.environ['DATABASE_PATH'] = cls._test_db_path
+        Config.DATABASE = cls._test_db_path
+        reset_connection_state()
 
         from app import app
         cls.app = app
         cls._orig_testing = app.config.get('TESTING')
         cls._orig_csrf = app.config.get('WTF_CSRF_ENABLED', True)
-
-        Config.DATABASE = cls._test_db_path
-        invalidate_settings_cache()
 
         app.config['TESTING'] = True
         app.config['WTF_CSRF_ENABLED'] = True
@@ -43,14 +45,19 @@ class CattleSystemTestCase(unittest.TestCase):
     def tearDownClass(cls):
         cls.app.config['TESTING'] = cls._orig_testing
         cls.app.config['WTF_CSRF_ENABLED'] = cls._orig_csrf
+        if cls._orig_env_db is None:
+            os.environ.pop('DATABASE_PATH', None)
+        else:
+            os.environ['DATABASE_PATH'] = cls._orig_env_db
         Config.DATABASE = cls._orig_db
-        invalidate_settings_cache()
+        reset_connection_state()
         cls._tmp_dir.cleanup()
 
     def setUp(self):
         from routes import auth as auth_routes
-        auth_routes._failed_logins.clear()
-        self.client.get('/logout', follow_redirects=False)
+        auth_routes.clear_all_auth_lockouts()
+        with self.client.session_transaction() as sess:
+            sess.clear()
 
     def _extract_csrf(self, html_bytes):
         text = html_bytes.decode('utf-8', errors='ignore')
@@ -77,7 +84,8 @@ class CattleSystemTestCase(unittest.TestCase):
         )
 
     def logout(self):
-        return self.client.get('/logout', follow_redirects=True)
+        token = self.get_csrf_token('/dashboard')
+        return self.client.post('/logout', data={'csrf_token': token}, follow_redirects=True)
 
     # 1. ТЕСТЫ АВТОРИЗАЦИИ И ДОСТУПА
     def test_01_public_and_auth_protection(self):
@@ -397,7 +405,7 @@ class CattleSystemTestCase(unittest.TestCase):
         self.assertEqual(self.client.get('/seed_test_data').status_code, 404)
         self.logout()
 
-    # 9. ПРОВЕРКА ПЕРВИЧНОГО СИДИНГА create_default_users ТОЛЬКО ПРИ ПУСТОЙ БД
+    # 9. ПРОВЕРКА ПЕРВИЧНОГО СИДИНГА create_default_users И ОБЯЗАТЕЛЬНОЙ СМЕНЫ ПАРОЛЯ
     def test_09_initial_admin_only_on_empty_db(self):
         from create_users import create_default_users
         saved_db = Config.DATABASE
@@ -405,14 +413,33 @@ class CattleSystemTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             db2 = os.path.join(td, 'empty_init.db')
             Config.DATABASE = db2
-            invalidate_settings_cache()
+            reset_connection_state()
             os.environ['INITIAL_ADMIN_PASSWORD'] = 'InitEnvPass#999'
             try:
                 init_db()
                 create_default_users()
                 u = authenticate_user('admin', 'InitEnvPass#999')
                 self.assertIsNotNone(u)
-                self.assertFalse(u.must_change_password)
+                self.assertTrue(u.must_change_password)
+
+                # При первом входе пользователь с must_change_password=True перенаправляется на смену пароля
+                res_login = self.login('admin', 'InitEnvPass#999', follow_redirects=False)
+                self.assertEqual(res_login.status_code, 302)
+                self.assertIn('/first_login_password', res_login.headers['Location'])
+
+                res_dash_blocked = self.client.get('/dashboard', follow_redirects=False)
+                self.assertEqual(res_dash_blocked.status_code, 302)
+                self.assertIn('/first_login_password', res_dash_blocked.headers['Location'])
+
+                csrf_fl = self.get_csrf_token('/first_login_password')
+                res_change = self.client.post('/first_login_password', data={
+                    'csrf_token': csrf_fl,
+                    'new_password': 'NewStrongPass#2026',
+                    'confirm_password': 'NewStrongPass#2026',
+                }, follow_redirects=True)
+                self.assertEqual(res_change.status_code, 200)
+                self.assertIsNotNone(authenticate_user('admin', 'NewStrongPass#2026'))
+                self.assertFalse(authenticate_user('admin', 'NewStrongPass#2026').must_change_password)
 
                 # Повторный запуск на непустой БД не должен менять или пересоздавать пользователей
                 os.environ['INITIAL_ADMIN_PASSWORD'] = 'AnotherPass#888'
@@ -424,7 +451,7 @@ class CattleSystemTestCase(unittest.TestCase):
                 else:
                     os.environ['INITIAL_ADMIN_PASSWORD'] = saved_env
                 Config.DATABASE = saved_db
-                invalidate_settings_cache()
+                reset_connection_state()
 
     # 10. СТРЕСС-ТЕСТ ОДНОВРЕМЕННОЙ ЗАПИСИ ИЗ НЕСКОЛЬКИХ ПОТОКОВ
     def test_10_concurrent_writes_no_lock_errors(self):
@@ -538,7 +565,7 @@ class CattleSystemTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             db_reasons = os.path.join(td, 'reasons_upgrade.db')
             Config.DATABASE = db_reasons
-            invalidate_settings_cache()
+            reset_connection_state()
             try:
                 # Имитация существующей БД старой версии с пользовательской причиной и скрытой причиной
                 conn = sqlite3.connect(db_reasons)
@@ -579,7 +606,7 @@ class CattleSystemTestCase(unittest.TestCase):
                 self.assertNotIn('Закупорка пищевода', san_reasons)
             finally:
                 Config.DATABASE = saved_db
-                invalidate_settings_cache()
+                reset_connection_state()
 
     # 12. ПРОВЕРКА ЖУРНАЛА БЕЗ ИКОНОК В ФАЗАХ/СТЕЛЬНОСТИ И ПРОСМОТРА ПО КОНКРЕТНЫМ ФЕРМАМ
     def test_12_clean_journal_and_per_farm_view(self):
@@ -671,6 +698,131 @@ class CattleSystemTestCase(unittest.TestCase):
         self.assertIn('Ферма 2', farms_json)
 
         self.logout()
+
+    # 13. КОМПЛЕКСНАЯ ПРОВЕРКА ИСПРАВЛЕНИЙ АУДИТА БЕЗОПАСНОСТИ И НАДЁЖНОСТИ ДАННЫХ
+    def test_13_audit_fixes_verification(self):
+        from domain import validate_cow_payload
+        from backup import create_db_backup_bytes, restore_db_from_upload
+        from werkzeug.datastructures import FileStorage
+
+        # 13.1 Защита от Path Traversal в маршрутах изображений и статики
+        for bad_path in (
+            '/img/../../instance/.secret_key',
+            '/img/..%2f..%2fconfig.py',
+            '/static/img/../../config.py',
+            '/img/arbitrary.txt',
+            '/assets/../../config.py',
+        ):
+            res_bad = self.client.get(bad_path)
+            self.assertEqual(res_bad.status_code, 404, f"Ожидался 404 для {bad_path}")
+
+        with self.client.get('/img/logo.svg') as res_svg:
+            self.assertEqual(res_svg.status_code, 200)
+        with self.client.get('/img/logo.png') as res_png:
+            self.assertEqual(res_png.status_code, 200)
+
+        # 13.2 Защита Logout от CSRF (GET запрещен -> 405, POST без CSRF -> 400)
+        self.login('farm1', 'Farm1Test#123')
+        self.assertEqual(self.client.get('/logout').status_code, 405)
+        self.assertEqual(self.client.post('/logout').status_code, 400)
+
+        # 13.3 Изоляция /get_farms для пользователей ферм
+        res_f1_farms = self.client.get('/get_farms')
+        self.assertEqual(res_f1_farms.status_code, 200)
+        self.assertEqual(res_f1_farms.get_json(), ['Ферма 1'])
+
+        # 13.4 Пакетное добавление не скрывает ошибочные строки и возвращает номера строк и причины
+        csrf_batch = self.get_csrf_token('/add_multiple_cows')
+        res_batch = self.client.post(
+            '/add_multiple_cows',
+            json=[
+                {'category': 'выбраковка', 'reason': 'Мастит', 'ear_tag': 'BYBATCHOK1'},
+                {'category': 'неверная_категория', 'reason': 'Ошибка', 'ear_tag': 'BYBATCHBAD1'},
+            ],
+            headers={'X-CSRFToken': csrf_batch, 'X-Requested-With': 'XMLHttpRequest'}
+        )
+        self.assertEqual(res_batch.status_code, 200)
+        batch_json = res_batch.get_json()
+        self.assertFalse(batch_json['success'])
+        self.assertTrue(batch_json['partial'])
+        self.assertEqual(batch_json['added_count'], 1)
+        self.assertEqual(batch_json['skipped_count'], 1)
+        self.assertEqual(batch_json['errors'][0]['row'], 2)
+
+        # 13.5 Старый бинарный .xls отклоняется с понятным сообщением
+        csrf_imp = self.get_csrf_token('/import_cows')
+        res_xls = self.client.post('/import_cows', data={
+            'csrf_token': csrf_imp,
+            'file': (io.BytesIO(b'fake xls bytes'), 'old_report.xls')
+        }, content_type='multipart/form-data', follow_redirects=True)
+        self.assertEqual(res_xls.status_code, 200)
+        self.assertIn('.xlsx'.encode('utf-8'), res_xls.data)
+        self.logout()
+
+        # 13.6 Единая политика паролей (>= 8 символов, буквы и цифры)
+        ok_short, _ = register_user('weak_u', '123456', 'farm', 'Ферма 1')
+        self.assertFalse(ok_short)
+        ok_nodigit, _ = register_user('weak_u2', 'onlyletters', 'farm', 'Ферма 1')
+        self.assertFalse(ok_nodigit)
+        ok_good, _ = register_user('temp_del_u', 'ValidPass123', 'farm', 'Ферма 1')
+        self.assertTrue(ok_good)
+
+        # 13.7 PRAGMA foreign_keys=ON и ON DELETE SET NULL при удалении пользователя
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute('PRAGMA foreign_keys;')
+        self.assertEqual(cur.fetchone()[0], 1)
+        cur.execute("SELECT id FROM users WHERE username = 'temp_del_u'")
+        del_uid = cur.fetchone()['id']
+        cur.execute(
+            "INSERT INTO cows (cow_id, ear_tag, farm_name, category, reason, disposal_date, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ('FKTEST-1', 'BYFK0001', 'Ферма 1', 'выбраковка', 'Мастит', '2026-03-01', del_uid)
+        )
+        conn.commit()
+        conn.close()
+
+        self.login('admin', 'AdminTest#123')
+        csrf_um = self.get_csrf_token('/user_management')
+        res_del_u = self.client.post(f'/delete_user/{del_uid}', data={'csrf_token': csrf_um}, follow_redirects=True)
+        self.assertEqual(res_del_u.status_code, 200)
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id, created_by FROM cows WHERE cow_id = 'FKTEST-1'")
+        fk_row = cur.fetchone()
+        self.assertIsNotNone(fk_row)
+        self.assertIsNone(fk_row['created_by'])
+        conn.close()
+        self.logout()
+
+        # 13.8 Валидация доменных полей: отклонение дробных целых и неизвестной ПВГ
+        _, errs_frac = validate_cow_payload({
+            'category': 'выбраковка',
+            'reason': 'Мастит',
+            'disposal_date': '2026-03-01',
+            'lactation': '1.9',
+            'age_group': 'Неизвестная группа 123'
+        })
+        self.assertTrue(any('целым числом' in e for e in errs_frac))
+        self.assertTrue(any('половозрастная группа' in e for e in errs_frac))
+
+        _, errs_int_float = validate_cow_payload({
+            'category': 'выбраковка',
+            'reason': 'Мастит',
+            'disposal_date': '2026-03-01',
+            'lactation': '2.0',
+        })
+        self.assertEqual(errs_int_float, [])
+
+        # 13.9 Восстановление БД с использованием SQLite Online Backup API и откатом
+        bak_bytes, _ = create_db_backup_bytes()
+        bad_stream = FileStorage(stream=io.BytesIO(b'not a sqlite database' * 10), filename='bad.sqlite')
+        ok_bad, _ = restore_db_from_upload(bad_stream, username='admin')
+        self.assertFalse(ok_bad)
+
+        good_stream = FileStorage(stream=io.BytesIO(bak_bytes), filename='good.sqlite')
+        ok_good_restore, _ = restore_db_from_upload(good_stream, username='admin')
+        self.assertTrue(ok_good_restore)
 
 
 if __name__ == '__main__':

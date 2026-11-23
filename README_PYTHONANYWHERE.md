@@ -35,16 +35,23 @@
 4. Нажмите зелёную кнопку **Reload <ваш-логин>.pythonanywhere.com**.
 5. Войдите под пользователем `admin`. Все учётные записи ферм и их пароли создаются, изменяются и выдаются исключительно администратором через меню **Администрирование → Пользователи ферм / Создать аккаунт**.
 
-## Очистка базы данных перед запуском в работу
+## Полный сброс базы данных (ТОЛЬКО при чистом старте или в тестовой среде)
 
-### Вариант 1: Удалить только тестовые записи (сохранив пользователей, фермы, причины и нормативы)
-Выполните в Bash-консоли PythonAnywhere в папке проекта:
+> **Внимание!** Приведённые ниже команды удаляют **ВСЕ** накопленные записи учёта (не только тестовые). Никогда не выполняйте их на рабочей базе без предварительной резервной копии!
+
+Перед любым сбросом обязательно сохраните резервную копию:
+```bash
+python3 -c "from backup import create_db_backup_bytes; data, name = create_db_backup_bytes(); open(name, 'wb').write(data); print('Backup saved:', name)"
+```
+
+### Вариант 1: Полная очистка журналов учёта (с сохранением пользователей, ферм, справочника причин и нормативов)
+Выполните только в том случае, если уверены, что нужно удалить **все** записи в таблицах `cows`, `stillbirth_records`, `farm_counters` и `audit_logs`:
 ```bash
 python3 -c "from database import run_write_transaction; run_write_transaction(lambda c, cur: [cur.execute(q) for q in ('DELETE FROM cows', 'DELETE FROM stillbirth_records', 'DELETE FROM farm_counters', 'DELETE FROM audit_logs', \"DELETE FROM sqlite_sequence WHERE name IN ('cows','stillbirth_records','audit_logs')\")])"
 ```
 После этого нажмите **Reload** на вкладке **Web**.
 
-### Вариант 2: Полный сброс базы данных с нуля
+### Вариант 2: Полное пересоздание базы данных с нуля (удаляет также всех пользователей и настройки)
 ```bash
 rm -f cattle_disposal.db cattle_disposal.db-wal cattle_disposal.db-shm
 python3 create_users.py
