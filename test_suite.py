@@ -1017,7 +1017,10 @@ class CattleSystemTestCase(unittest.TestCase):
 
     # 16. ПРОВЕРКА ПЛАНОВОГО ЕЖЕНЕДЕЛЬНОГО И ЕЖЕМЕСЯЧНОГО БЭКАПА (scheduled_backup.py)
     def test_16_scheduled_weekly_and_monthly_backup(self):
+        import inspect
         from scheduled_backup import run_scheduled_backup
+
+        self.assertEqual(inspect.signature(run_scheduled_backup).parameters['keep'].default, 52)
 
         with tempfile.TemporaryDirectory() as bak_dir:
             # Создаем 2 искусственные старые копии за прошлые месяцы для проверки ротации (keep=2)

@@ -63,7 +63,7 @@ def _prune_old_backups(backup_dir, keep_count):
     return removed
 
 
-def run_scheduled_backup(backup_dir=None, period='weekly', monthly=None, keep=12, force=False):
+def run_scheduled_backup(backup_dir=None, period='weekly', monthly=None, keep=52, force=False):
     """
     Создаёт резервную копию БД в папке backup_dir.
     По умолчанию period='weekly' — создаёт не более одной копии в календарную неделю (ISO),
@@ -125,7 +125,7 @@ def main():
     group.add_argument('--weekly', action='store_true', help='Создавать не чаще одного раза в неделю (по умолчанию)')
     group.add_argument('--monthly', action='store_true', help='Создавать не чаще одного раза в месяц')
     parser.add_argument('--force', action='store_true', help='Создать копию принудительно, игнорируя проверку периода')
-    parser.add_argument('--keep', type=int, default=12, help='Сколько последних копий хранить (по умолчанию 12)')
+    parser.add_argument('--keep', type=int, default=52, help='Сколько последних копий хранить (по умолчанию 52 — 1 год при еженедельном запуске)')
     args = parser.parse_args()
 
     period = 'monthly' if args.monthly else 'weekly'
