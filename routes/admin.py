@@ -153,10 +153,13 @@ def download_backup():
         }
     )
 
-@admin_bp.route('/backup/restore', methods=['POST'])
+@admin_bp.route('/backup/restore', methods=['GET', 'POST'])
 @admin_required
 def restore_backup():
     """Восстановление базы данных из загруженного файла бэкапа"""
+    if request.method == 'GET':
+        return redirect(url_for('admin.backup'))
+
     if 'backup_file' not in request.files:
         flash('Файл резервной копии не выбран', 'danger')
         return redirect(url_for('admin.backup'))

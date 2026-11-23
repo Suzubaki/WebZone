@@ -970,6 +970,10 @@ class CattleSystemTestCase(unittest.TestCase):
         res_page = self.client.get('/backup')
         self.assertEqual(res_page.status_code, 200)
 
+        res_rest_get = self.client.get('/backup/restore', follow_redirects=False)
+        self.assertEqual(res_rest_get.status_code, 302)
+        self.assertIn('/backup', res_rest_get.headers.get('Location', ''))
+
         res_dl = self.client.get('/backup/download')
         self.assertEqual(res_dl.status_code, 200)
         self.assertIn('attachment;', res_dl.headers.get('Content-Disposition', ''))
