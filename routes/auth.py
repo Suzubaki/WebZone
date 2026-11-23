@@ -11,98 +11,73 @@ from auth import (
 
 auth_bp = Blueprint('auth', __name__)
 
-# Брутфорс-защита: хранение неудачных попыток входа по IP в SQLite (общая между воркерами WSGI)
-_failed_logins = {}
+# Брутфорс-защита: хранение неудачных попыток входа по IP строго в SQLite (общая между воркерами WSGI)
 _FAILED_WINDOW_SEC = 600
-_MAX_TRACKED_IPS = 2000
 
 
 def clear_all_auth_lockouts():
     """Очищает таблицу блокировок авторизации (используется в тестах)."""
-    _failed_logins.clear()
-    try:
-        run_write_transaction(lambda _conn, cur: cur.execute('DELETE FROM auth_lockouts'))
-    except sqlite3.Error:
-        pass
+    run_write_transaction(lambda _conn, cur: cur.execute('DELETE FROM auth_lockouts'))
 
 
 def _check_auth_lockout(client_ip):
     now = time.time()
+    conn = get_db_connection()
     try:
-        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute('SELECT fail_count, last_attempt, locked_until FROM auth_lockouts WHERE ip = ?', (client_ip,))
         row = cur.fetchone()
+    finally:
         conn.close()
-        if not row:
-            return False, 0
-        if row['locked_until'] > now:
-            return True, max(1, int(row['locked_until'] - now))
-        if now - row['last_attempt'] > _FAILED_WINDOW_SEC:
-            run_write_transaction(lambda _conn, c: c.execute('DELETE FROM auth_lockouts WHERE ip = ?', (client_ip,)))
+
+    if not row:
         return False, 0
-    except sqlite3.Error:
-        rec = _failed_logins.get(client_ip)
-        if not rec:
-            return False, 0
-        locked_until = rec.get('locked_until', 0)
-        if locked_until > now:
-            return True, max(1, int(locked_until - now))
-        return False, 0
+    if row['locked_until'] > now:
+        return True, max(1, int(row['locked_until'] - now))
+    if now - row['last_attempt'] > _FAILED_WINDOW_SEC:
+        run_write_transaction(
+            lambda _conn, c: c.execute(
+                'DELETE FROM auth_lockouts WHERE ip = ? AND locked_until <= ?',
+                (client_ip, now)
+            )
+        )
+    return False, 0
 
 
 def _record_failed_auth(client_ip):
     now = time.time()
-    try:
-        def _tx_fail(_conn, cur):
-            cur.execute('DELETE FROM auth_lockouts WHERE last_attempt < ? AND locked_until <= ?', (now - _FAILED_WINDOW_SEC, now))
-            cur.execute('SELECT fail_count, last_attempt FROM auth_lockouts WHERE ip = ?', (client_ip,))
-            row = cur.fetchone()
-            if not row or (now - row['last_attempt'] > _FAILED_WINDOW_SEC):
-                count = 1
-            else:
-                count = (row['fail_count'] or 0) + 1
 
-            locked_until = 0.0
-            if count >= 10:
-                locked_until = now + 180
-            elif count >= 8:
-                locked_until = now + 60
-            elif count >= 5:
-                locked_until = now + 15
-
-            cur.execute('''
-                INSERT INTO auth_lockouts (ip, fail_count, last_attempt, locked_until)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(ip) DO UPDATE SET
-                    fail_count = excluded.fail_count,
-                    last_attempt = excluded.last_attempt,
-                    locked_until = excluded.locked_until
-            ''', (client_ip, count, now, locked_until))
-
-        run_write_transaction(_tx_fail)
-    except sqlite3.Error:
-        rec = _failed_logins.get(client_ip)
-        if not rec or (now - rec['last'] > _FAILED_WINDOW_SEC):
-            rec = {'count': 1, 'last': now, 'locked_until': 0}
+    def _tx_fail(_conn, cur):
+        cur.execute('DELETE FROM auth_lockouts WHERE last_attempt < ? AND locked_until <= ?', (now - _FAILED_WINDOW_SEC, now))
+        cur.execute('SELECT fail_count, last_attempt FROM auth_lockouts WHERE ip = ?', (client_ip,))
+        row = cur.fetchone()
+        if not row or (now - row['last_attempt'] > _FAILED_WINDOW_SEC):
+            count = 1
         else:
-            rec['count'] += 1
-            rec['last'] = now
-        if rec['count'] >= 10:
-            rec['locked_until'] = now + 180
-        elif rec['count'] >= 8:
-            rec['locked_until'] = now + 60
-        elif rec['count'] >= 5:
-            rec['locked_until'] = now + 15
-        _failed_logins[client_ip] = rec
+            count = (row['fail_count'] or 0) + 1
+
+        locked_until = 0.0
+        if count >= 10:
+            locked_until = now + 180
+        elif count >= 8:
+            locked_until = now + 60
+        elif count >= 5:
+            locked_until = now + 15
+
+        cur.execute('''
+            INSERT INTO auth_lockouts (ip, fail_count, last_attempt, locked_until)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(ip) DO UPDATE SET
+                fail_count = excluded.fail_count,
+                last_attempt = excluded.last_attempt,
+                locked_until = excluded.locked_until
+        ''', (client_ip, count, now, locked_until))
+
+    run_write_transaction(_tx_fail)
 
 
 def _clear_failed_auth(client_ip):
-    _failed_logins.pop(client_ip, None)
-    try:
-        run_write_transaction(lambda _conn, cur: cur.execute('DELETE FROM auth_lockouts WHERE ip = ?', (client_ip,)))
-    except sqlite3.Error:
-        pass
+    run_write_transaction(lambda _conn, cur: cur.execute('DELETE FROM auth_lockouts WHERE ip = ?', (client_ip,)))
 
 
 def login_required(f):

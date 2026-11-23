@@ -55,7 +55,9 @@ class CattleSystemTestCase(unittest.TestCase):
 
     def setUp(self):
         from routes import auth as auth_routes
+        from app import clear_all_rate_limits
         auth_routes.clear_all_auth_lockouts()
+        clear_all_rate_limits()
         with self.client.session_transaction() as sess:
             sess.clear()
 
@@ -823,6 +825,139 @@ class CattleSystemTestCase(unittest.TestCase):
         good_stream = FileStorage(stream=io.BytesIO(bak_bytes), filename='good.sqlite')
         ok_good_restore, _ = restore_db_from_upload(good_stream, username='admin')
         self.assertTrue(ok_good_restore)
+
+        # 13.10 Rate-limit и auth lockout полностью хранятся в SQLite (без словарей в памяти)
+        from app import check_rate_limit, clear_all_rate_limits
+        from routes import auth as auth_routes
+        self.assertFalse(hasattr(auth_routes, '_failed_logins'))
+        clear_all_rate_limits()
+
+        # Проверяем запись блокировки входа в SQLite auth_lockouts
+        for _ in range(5):
+            self.login('admin', 'wrong_pass_sqlite', remote_addr='10.20.0.1')
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT fail_count, locked_until FROM auth_lockouts WHERE ip = '10.20.0.1'")
+        lock_row = cur.fetchone()
+        conn.close()
+        self.assertIsNotNone(lock_row)
+        self.assertEqual(lock_row['fail_count'], 5)
+        self.assertGreater(lock_row['locked_until'], 0)
+
+        # Проверяем rate_limit в SQLite (20 burst-запросов разрешены, 21-й блокируется)
+        for _ in range(20):
+            allowed, _ = check_rate_limit('10.20.0.99', max_reqs=60, window_sec=60, burst_limit=20, burst_window=5, block_sec=30)
+            self.assertTrue(allowed)
+        allowed_21, wait_21 = check_rate_limit('10.20.0.99', max_reqs=60, window_sec=60, burst_limit=20, burst_window=5, block_sec=30)
+        self.assertFalse(allowed_21)
+        self.assertGreaterEqual(wait_21, 1)
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT req_count, burst_count, blocked_until FROM rate_limits WHERE ip = '10.20.0.99'")
+        rl_row = cur.fetchone()
+        conn.close()
+        self.assertIsNotNone(rl_row)
+        self.assertEqual(rl_row['burst_count'], 21)
+        self.assertGreater(rl_row['blocked_until'], 0)
+
+        # Проверяем HTTP 429 + Retry-After через анти-DDoS guard в SQLite
+        saved_rl_env = os.environ.get('ENABLE_TEST_RATELIMIT')
+        os.environ['ENABLE_TEST_RATELIMIT'] = '1'
+        try:
+            csrf_rl = self.get_csrf_token('/login')
+            res_429 = self.client.post(
+                '/login',
+                data={'username': 'admin', 'password': 'x', 'csrf_token': csrf_rl},
+                environ_base={'REMOTE_ADDR': '10.20.0.99'}
+            )
+            self.assertEqual(res_429.status_code, 429)
+            self.assertIn('Retry-After', res_429.headers)
+        finally:
+            if saved_rl_env is None:
+                os.environ.pop('ENABLE_TEST_RATELIMIT', None)
+            else:
+                os.environ['ENABLE_TEST_RATELIMIT'] = saved_rl_env
+            clear_all_rate_limits()
+
+    # 14. МИГРАЦИЯ FK ON DELETE SET NULL НА УСТАРЕВШЕЙ БД С ДОП. КОЛОНКАМИ (autopsy_protocol)
+    def test_14_legacy_fk_migration_preserves_extra_columns(self):
+        saved_db = Config.DATABASE
+        with tempfile.TemporaryDirectory() as td:
+            legacy_db = os.path.join(td, 'legacy_extra_cols.db')
+            Config.DATABASE = legacy_db
+            reset_connection_state()
+            try:
+                conn = sqlite3.connect(legacy_db)
+                conn.execute('''
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        user_type TEXT NOT NULL,
+                        farm_name TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                conn.execute(
+                    "INSERT INTO users (id, username, password_hash, user_type, farm_name) VALUES (1, 'legacy_u', 'hash', 'farm', 'Ферма 1')"
+                )
+                # Эмуляция старой таблицы cows с legacy-колонкой autopsy_protocol и FK без ON DELETE SET NULL
+                conn.execute('''
+                    CREATE TABLE cows (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        cow_id TEXT NOT NULL,
+                        farm_name TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        reason TEXT NOT NULL,
+                        disposal_date DATE NOT NULL,
+                        autopsy_protocol TEXT DEFAULT 'протокол',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        created_by INTEGER,
+                        FOREIGN KEY (created_by) REFERENCES users (id)
+                    )
+                ''')
+                conn.execute(
+                    "INSERT INTO cows (cow_id, farm_name, category, reason, disposal_date, autopsy_protocol, created_by) "
+                    "VALUES ('LEG-1', 'Ферма 1', 'падёж', 'Мастит', '2026-01-10', 'Акт №5', 1)"
+                )
+                conn.execute(
+                    "INSERT INTO cows (cow_id, farm_name, category, reason, disposal_date, autopsy_protocol, created_by) "
+                    "VALUES ('LEG-2', 'Ферма 1', 'падёж', 'Кетоз', '2026-01-11', 'Акт №6', 999)"
+                )
+                conn.commit()
+                conn.close()
+
+                # Запуск init_db() должен без ошибок обновить FK и сохранить autopsy_protocol и строки
+                init_db()
+
+                conn = get_db_connection()
+                cur = conn.cursor()
+                cur.execute("PRAGMA table_info(cows)")
+                col_names = {r['name'] for r in cur.fetchall()}
+                self.assertIn('autopsy_protocol', col_names)
+
+                cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='cows'")
+                ddl = cur.fetchone()['sql'].upper()
+                self.assertGreaterEqual(ddl.count('ON DELETE SET NULL'), 2)
+
+                cur.execute("SELECT cow_id, autopsy_protocol, created_by FROM cows ORDER BY id")
+                rows = cur.fetchall()
+                self.assertEqual(len(rows), 2)
+                self.assertEqual(rows[0]['autopsy_protocol'], 'Акт №5')
+                self.assertEqual(rows[0]['created_by'], 1)
+                self.assertEqual(rows[1]['autopsy_protocol'], 'Акт №6')
+                self.assertIsNone(rows[1]['created_by'])
+
+                # Удаление пользователя должно выставить created_by = NULL без ошибки FK
+                cur.execute("DELETE FROM users WHERE id = 1")
+                conn.commit()
+                cur.execute("SELECT created_by FROM cows WHERE cow_id = 'LEG-1'")
+                self.assertIsNone(cur.fetchone()['created_by'])
+                conn.close()
+            finally:
+                Config.DATABASE = saved_db
+                reset_connection_state()
 
 
 if __name__ == '__main__':

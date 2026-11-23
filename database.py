@@ -59,6 +59,8 @@ def _create_indexes(cursor):
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_stillbirth_farm_date ON stillbirth_records (farm_name, event_date);')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_stillbirth_event_type ON stillbirth_records (event_type);')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_stillbirth_mother_tag ON stillbirth_records (mother_tag);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_auth_lockouts_last ON auth_lockouts (last_attempt, locked_until);')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits (window_start, blocked_until);')
 
 
 def _drop_redundant_indexes(cursor):
@@ -425,6 +427,18 @@ def init_db():
         )
     ''')
 
+    # 9. Таблица ограничений частоты запросов / анти-DDoS (общая между воркерами WSGI)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS rate_limits (
+            ip TEXT PRIMARY KEY,
+            window_start REAL NOT NULL,
+            req_count INTEGER NOT NULL DEFAULT 0,
+            burst_start REAL NOT NULL,
+            burst_count INTEGER NOT NULL DEFAULT 0,
+            blocked_until REAL NOT NULL DEFAULT 0
+        )
+    ''')
+
     # Однократная миграция legacy-мертворождений из таблицы cows
     try:
         cursor.execute('''
@@ -544,97 +558,65 @@ def init_db():
 def _migrate_fk_on_delete_set_null():
     """
     Обновляет внешние ключи created_by/updated_by в существующих таблицах cows и stillbirth_records
-    до ON DELETE SET NULL и очищает осиротевшие ссылки, чтобы PRAGMA foreign_keys=ON работал корректно.
+    до ON DELETE SET NULL, сохраняя все существующие (в том числе legacy) колонки и очищая осиротевшие ссылки.
     """
     conn = sqlite3.connect(Config.DATABASE, timeout=15.0, isolation_level=None)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     try:
         cur.execute('PRAGMA busy_timeout=10000;')
-        for tbl, create_new_sql in (
-            (
-                'cows',
-                '''
-                CREATE TABLE cows_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    cow_id TEXT NOT NULL,
-                    ear_tag TEXT,
-                    farm_name TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    disposal_date DATE NOT NULL,
-                    lactation INTEGER,
-                    weight REAL,
-                    notes TEXT,
-                    age_group TEXT,
-                    lactation_days INTEGER,
-                    lactation_phase TEXT,
-                    pathology_system TEXT,
-                    breed TEXT,
-                    milk_yield REAL,
-                    book_value REAL,
-                    is_pregnant INTEGER DEFAULT 0,
-                    gestation_days INTEGER DEFAULT 0,
-                    is_stillborn INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    created_by INTEGER,
-                    updated_at TIMESTAMP,
-                    updated_by INTEGER,
-                    FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL,
-                    FOREIGN KEY (updated_by) REFERENCES users (id) ON DELETE SET NULL
-                )
-                '''
-            ),
-            (
-                'stillbirth_records',
-                '''
-                CREATE TABLE stillbirth_records_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    record_code TEXT NOT NULL,
-                    farm_name TEXT NOT NULL,
-                    event_date DATE NOT NULL,
-                    mother_tag TEXT,
-                    mother_group TEXT,
-                    event_type TEXT NOT NULL,
-                    fetus_sex TEXT,
-                    fetus_weight REAL,
-                    gestation_days INTEGER DEFAULT 0,
-                    cause TEXT NOT NULL,
-                    mother_condition TEXT,
-                    attendant TEXT,
-                    notes TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    created_by INTEGER,
-                    updated_at TIMESTAMP,
-                    updated_by INTEGER,
-                    FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL,
-                    FOREIGN KEY (updated_by) REFERENCES users (id) ON DELETE SET NULL
-                )
-                '''
-            ),
-        ):
+        for tbl in ('cows', 'stillbirth_records'):
             cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?", (tbl,))
             row = cur.fetchone()
             if not row or not row['sql']:
                 continue
-            ddl_upper = row['sql'].upper()
-            if 'ON DELETE SET NULL' in ddl_upper:
-                continue
 
             cur.execute(f"PRAGMA table_info({tbl})")
-            cols = [r['name'] for r in cur.fetchall()]
-            col_list = ', '.join(cols)
+            table_info = cur.fetchall()
+            if not table_info:
+                continue
+
+            col_names = [r['name'] for r in table_info]
+            expected_fk_count = sum(1 for c in ('created_by', 'updated_by') if c in col_names)
+            ddl_upper = row['sql'].upper()
+            if expected_fk_count == 0 or ddl_upper.count('ON DELETE SET NULL') >= expected_fk_count:
+                continue
+
+            col_defs = []
+            for r in table_info:
+                cname = r['name']
+                quoted = '"' + cname.replace('"', '""') + '"'
+                ctype = (r['type'] or 'TEXT').strip()
+                if r['pk'] == 1 and ctype.upper() == 'INTEGER':
+                    col_defs.append(f"{quoted} INTEGER PRIMARY KEY AUTOINCREMENT")
+                else:
+                    parts = [quoted, ctype]
+                    if r['notnull']:
+                        parts.append('NOT NULL')
+                    if r['dflt_value'] is not None:
+                        parts.append(f"DEFAULT {r['dflt_value']}")
+                    col_defs.append(' '.join(parts))
+
+            if 'created_by' in col_names:
+                col_defs.append('FOREIGN KEY ("created_by") REFERENCES users (id) ON DELETE SET NULL')
+            if 'updated_by' in col_names:
+                col_defs.append('FOREIGN KEY ("updated_by") REFERENCES users (id) ON DELETE SET NULL')
+
+            create_new_sql = f'CREATE TABLE "{tbl}_new" (\n    ' + ',\n    '.join(col_defs) + '\n)'
+            col_list = ', '.join('"' + c.replace('"', '""') + '"' for c in col_names)
 
             cur.execute('PRAGMA foreign_keys=OFF;')
             cur.execute('BEGIN IMMEDIATE;')
             try:
-                cur.execute(f"UPDATE {tbl} SET created_by = NULL WHERE created_by IS NOT NULL AND created_by NOT IN (SELECT id FROM users)")
-                cur.execute(f"UPDATE {tbl} SET updated_by = NULL WHERE updated_by IS NOT NULL AND updated_by NOT IN (SELECT id FROM users)")
-                cur.execute(f"DROP TABLE IF EXISTS {tbl}_new")
+                if 'created_by' in col_names:
+                    cur.execute(f'UPDATE "{tbl}" SET created_by = NULL WHERE created_by IS NOT NULL AND created_by NOT IN (SELECT id FROM users)')
+                if 'updated_by' in col_names:
+                    cur.execute(f'UPDATE "{tbl}" SET updated_by = NULL WHERE updated_by IS NOT NULL AND updated_by NOT IN (SELECT id FROM users)')
+                cur.execute(f'DROP TABLE IF EXISTS "{tbl}_new"')
                 cur.execute(create_new_sql)
-                cur.execute(f"INSERT INTO {tbl}_new ({col_list}) SELECT {col_list} FROM {tbl}")
-                cur.execute(f"DROP TABLE {tbl}")
-                cur.execute(f"ALTER TABLE {tbl}_new RENAME TO {tbl}")
+                cur.execute(f'INSERT INTO "{tbl}_new" ({col_list}) SELECT {col_list} FROM "{tbl}"')
+                cur.execute(f'DROP TABLE "{tbl}"')
+                cur.execute(f'ALTER TABLE "{tbl}_new" RENAME TO "{tbl}"')
                 cur.execute('COMMIT;')
             except Exception:
                 try:

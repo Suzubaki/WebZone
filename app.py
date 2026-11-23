@@ -11,7 +11,7 @@ from flask_wtf.csrf import CSRFError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config
-from database import init_db, get_all_settings
+from database import init_db, get_all_settings, run_write_transaction
 from auth import get_user_by_id
 from extensions import csrf
 
@@ -172,55 +172,69 @@ app.register_blueprint(api_bp)
 app.register_blueprint(stillborn_bp)
 
 
-# -------------------- ЗАЩИТА ОТ DDOS И ПЕРЕГРУЗКИ СЕРВЕРА --------------------
-_ip_requests = {}
-_blocked_ips = {}
-_MAX_IP_ENTRIES = 1000
-
-
+# -------------------- ЗАЩИТА ОТ DDOS И ПЕРЕГРУЗКИ СЕРВЕРА (SQLite) --------------------
 def get_client_ip():
     """IP клиента определяется через ProxyFix (без доверия к подделываемым заголовкам)."""
     return request.remote_addr or '127.0.0.1'
 
 
-def _prune_rate_limit_tables(now):
-    if len(_blocked_ips) > 200:
-        expired_blocks = [ip for ip, until in _blocked_ips.items() if until <= now]
-        for ip in expired_blocks:
-            _blocked_ips.pop(ip, None)
-
-    if len(_ip_requests) > _MAX_IP_ENTRIES:
-        cutoff = now - 60
-        stale_ips = [k for k, ts_list in _ip_requests.items() if not ts_list or ts_list[-1] < cutoff]
-        for k in stale_ips:
-            _ip_requests.pop(k, None)
+def clear_all_rate_limits():
+    """Очищает таблицу rate_limits (используется в тестах)."""
+    run_write_transaction(lambda _conn, cur: cur.execute('DELETE FROM rate_limits'))
 
 
-def check_rate_limit(tracker, ip, max_reqs, window_sec, burst_limit=None, burst_window=5, block_sec=60):
+def check_rate_limit(ip, max_reqs=60, window_sec=60, burst_limit=20, burst_window=5, block_sec=30):
+    """Атомарный учёт и проверка лимита запросов по IP в таблице SQLite rate_limits."""
     now = time.time()
-    _prune_rate_limit_tables(now)
 
-    unblock_time = _blocked_ips.get(ip)
-    if unblock_time:
-        if unblock_time > now:
-            return False, max(1, int(unblock_time - now))
-        _blocked_ips.pop(ip, None)
+    def _tx_rate(_conn, cur):
+        cur.execute(
+            'SELECT window_start, req_count, burst_start, burst_count, blocked_until FROM rate_limits WHERE ip = ?',
+            (ip,)
+        )
+        row = cur.fetchone()
 
-    timestamps = [t for t in tracker.get(ip, []) if now - t < window_sec]
-    tracker[ip] = timestamps
+        if row and row['blocked_until'] > now:
+            return False, max(1, int(row['blocked_until'] - now))
 
-    if burst_limit:
-        burst_ts = [t for t in timestamps if now - t < burst_window]
-        if len(burst_ts) >= burst_limit:
-            _blocked_ips[ip] = now + block_sec
+        expired_block = bool(row and row['blocked_until'] > 0)
+        if not row or expired_block or (now - row['window_start'] >= window_sec):
+            cur.execute(
+                'DELETE FROM rate_limits WHERE window_start < ? AND blocked_until <= ?',
+                (now - window_sec, now)
+            )
+            window_start = now
+            req_count = 1
+        else:
+            window_start = row['window_start']
+            req_count = (row['req_count'] or 0) + 1
+
+        if not row or expired_block or (now - row['burst_start'] >= burst_window):
+            burst_start = now
+            burst_count = 1
+        else:
+            burst_start = row['burst_start']
+            burst_count = (row['burst_count'] or 0) + 1
+
+        is_blocked = (burst_limit and burst_count > burst_limit) or (req_count > max_reqs)
+        blocked_until = (now + block_sec) if is_blocked else 0.0
+
+        cur.execute('''
+            INSERT INTO rate_limits (ip, window_start, req_count, burst_start, burst_count, blocked_until)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ip) DO UPDATE SET
+                window_start = excluded.window_start,
+                req_count = excluded.req_count,
+                burst_start = excluded.burst_start,
+                burst_count = excluded.burst_count,
+                blocked_until = excluded.blocked_until
+        ''', (ip, window_start, req_count, burst_start, burst_count, blocked_until))
+
+        if is_blocked:
             return False, block_sec
+        return True, 0
 
-    if len(timestamps) >= max_reqs:
-        _blocked_ips[ip] = now + block_sec
-        return False, block_sec
-
-    tracker[ip].append(now)
-    return True, 0
+    return run_write_transaction(_tx_rate)
 
 
 _COMPRESSIBLE_PREFIXES = ('text/', 'application/json', 'application/javascript', 'image/svg+xml')
@@ -231,16 +245,22 @@ _STATIC_CACHE_PREFIXES = ('/static/', '/img/', '/assets/', '/favicon', '/logo.')
 def anti_ddos_guard():
     if request.method not in ('POST', 'PUT', 'DELETE') or request.path.startswith(_STATIC_CACHE_PREFIXES):
         return None
-    if app.config.get('TESTING'):
+    if app.config.get('TESTING') and not os.environ.get('ENABLE_TEST_RATELIMIT'):
         return None
 
     client_ip = get_client_ip()
     if client_ip in ('127.0.0.1', '::1') and not os.environ.get('ENABLE_LOCAL_RATELIMIT'):
         return None
 
-    allowed, wait_sec = check_rate_limit(_ip_requests, client_ip, max_reqs=60, window_sec=60, burst_limit=20, burst_window=5, block_sec=30)
+    ensure_app_initialized()
+    allowed, wait_sec = check_rate_limit(client_ip, max_reqs=60, window_sec=60, burst_limit=20, burst_window=5, block_sec=30)
     if not allowed:
-        return Response(f"429 Too Many Requests: Превышен лимит запросов. Подождите {wait_sec} сек.", status=429, mimetype="text/plain; charset=utf-8")
+        return Response(
+            f"429 Too Many Requests: Превышен лимит запросов. Подождите {wait_sec} сек.",
+            status=429,
+            mimetype="text/plain; charset=utf-8",
+            headers={'Retry-After': str(wait_sec)}
+        )
 
     return None
 
