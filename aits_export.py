@@ -7,6 +7,7 @@ from xml.dom import minidom
 from datetime import datetime
 from config import Config
 from database import get_db_connection, get_setting
+from domain import sanitize_spreadsheet_cell
 
 # Коды событий выбытия по классификатору ГИС AITS (РБ)
 AITS_EVENT_CODES = {
@@ -70,7 +71,7 @@ def generate_aits_csv_registry(start_date, end_date, farm_name=None):
         event_code = AITS_EVENT_CODES.get(r['category'], '01')
         event_desc = 'Падёж' if r['category'] == 'падёж' else ('Санитарный убой' if r['category'] == 'санитарный' else 'Выбраковка')
         
-        writer.writerow([
+        writer.writerow([sanitize_spreadsheet_cell(v) for v in [
             unp,
             org_name,
             r['farm_name'],
@@ -82,7 +83,7 @@ def generate_aits_csv_registry(start_date, end_date, farm_name=None):
             r['weight'] or '',
             r['age_group'] or 'КРС',
             f"Акт 209-АПК от {formatted_date}"
-        ])
+        ]])
         
     output.seek(0)
     return output.getvalue()

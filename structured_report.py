@@ -6,6 +6,7 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime
 from config import Config
 from database import get_db_connection, get_setting
+from domain import sanitize_spreadsheet_cell
 
 def generate_structured_excel_report(start_date, end_date, farm_name=None):
     """
@@ -76,11 +77,11 @@ def generate_structured_excel_report(start_date, end_date, farm_name=None):
 
     for r_idx, row in enumerate(rows, 5):
         ws.row_dimensions[r_idx].height = 20
-        c1 = ws.cell(row=r_idx, column=1, value=row['cow_id'])
-        c2 = ws.cell(row=r_idx, column=2, value=row['farm_name'])
-        c3 = ws.cell(row=r_idx, column=3, value=row['category'])
-        c4 = ws.cell(row=r_idx, column=4, value=row['reason'])
-        c5 = ws.cell(row=r_idx, column=5, value=row['disposal_date'])
+        c1 = ws.cell(row=r_idx, column=1, value=sanitize_spreadsheet_cell(row['cow_id']))
+        c2 = ws.cell(row=r_idx, column=2, value=sanitize_spreadsheet_cell(row['farm_name']))
+        c3 = ws.cell(row=r_idx, column=3, value=sanitize_spreadsheet_cell(row['category']))
+        c4 = ws.cell(row=r_idx, column=4, value=sanitize_spreadsheet_cell(row['reason']))
+        c5 = ws.cell(row=r_idx, column=5, value=sanitize_spreadsheet_cell(row['disposal_date']))
         
         c1.alignment = align_center
         c2.alignment = align_left

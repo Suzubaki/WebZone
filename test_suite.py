@@ -1179,6 +1179,221 @@ class CattleSystemTestCase(unittest.TestCase):
                 else:
                     os.environ['ENABLE_AUTO_BACKUP_IN_TESTS'] = saved_env_ab
 
+    # 17. ЗАЩИТА EXCEL И CSV ОТ FORMULA INJECTION (=, +, -, @, \t, \r)
+    def test_17_spreadsheet_formula_injection_protection(self):
+        import openpyxl
+        from domain import sanitize_spreadsheet_cell
+
+        self.assertEqual(sanitize_spreadsheet_cell("=1+1"), "'=1+1")
+        self.assertEqual(sanitize_spreadsheet_cell("=CMD|'/C calc'!A0"), "'=CMD|'/C calc'!A0")
+        self.assertEqual(sanitize_spreadsheet_cell("+2+3"), "'+2+3")
+        self.assertEqual(sanitize_spreadsheet_cell("-2+3"), "'-2+3")
+        self.assertEqual(sanitize_spreadsheet_cell("@SUM(1,2)"), "'@SUM(1,2)")
+        self.assertEqual(sanitize_spreadsheet_cell("\t=1+1"), "'\t=1+1")
+        self.assertEqual(sanitize_spreadsheet_cell("  =HYPERLINK()"), "'  =HYPERLINK()")
+        self.assertEqual(sanitize_spreadsheet_cell("-"), "-")
+        self.assertEqual(sanitize_spreadsheet_cell(520.5), 520.5)
+        self.assertIsNone(sanitize_spreadsheet_cell(None))
+
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        self.login('farm1', 'Farm1Test#123')
+
+        csrf_cow = self.get_csrf_token('/add_cow')
+        self.client.post('/add_cow', data={
+            'csrf_token': csrf_cow,
+            'form_mode': 'cow',
+            'category': 'выбраковка',
+            'reason': "=CMD|'/C calc'!A0",
+            'disposal_date': today_str,
+            'ear_tag': '@evil_tag',
+            'age_group': 'Полновозрастные коровы (2+ лакт.)',
+            'lactation': '2',
+            'weight': '500',
+            'notes': '+1+1',
+        }, follow_redirects=True)
+
+        csrf_sb = self.get_csrf_token('/add_stillborn')
+        self.client.post('/add_stillborn', data={
+            'csrf_token': csrf_sb,
+            'event_date': today_str,
+            'mother_tag': '  =HYPERLINK("http://x")',
+            'mother_group': 'Полновозрастные коровы (2+ лакт.)',
+            'event_type': 'Мертворождённый телёнок (в срок)',
+            'cause': 'Другое',
+            'custom_cause': '=1+1',
+            'fetus_sex': 'Бычок',
+            'fetus_weight': '30',
+            'gestation_days': '280',
+            'notes': '-2+3',
+        }, follow_redirects=True)
+        self.logout()
+
+        self.login('admin', 'AdminTest#123')
+        csrf = self.get_csrf_token('/reports')
+
+        def _assert_no_formulas(xlsx_bytes):
+            wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), data_only=False)
+            ws = wb.active
+            values = []
+            for row in ws.iter_rows(values_only=False):
+                for cell in row:
+                    self.assertNotEqual(cell.data_type, 'f', msg=f"Formula cell found: {cell.coordinate}={cell.value}")
+                    if cell.value is not None:
+                        values.append(str(cell.value))
+            return values
+
+        for rtype in ('form_209_apk', 'form_210_apk', 'simple', 'structured'):
+            res = self.client.post('/generate_report', data={
+                'csrf_token': csrf,
+                'report_type': rtype,
+                'format': 'excel',
+                'start_date': today_str,
+                'end_date': today_str,
+                'farm_filter': 'all'
+            })
+            self.assertEqual(res.status_code, 200)
+            vals = _assert_no_formulas(res.data)
+            self.assertIn("'=CMD|'/C calc'!A0", vals)
+            if rtype != 'structured':
+                self.assertIn("'@evil_tag", vals)
+
+        res_sb_xlsx = self.client.get('/export_stillborn_excel')
+        self.assertEqual(res_sb_xlsx.status_code, 200)
+        sb_vals = _assert_no_formulas(res_sb_xlsx.data)
+        self.assertIn("'=1+1", sb_vals)
+        self.assertIn("'-2+3", sb_vals)
+        self.assertIn("'=HYPERLINK(\"http://x\")", sb_vals)
+
+        for rtype in ('simple', 'aits_registry'):
+            res_csv = self.client.post('/generate_report', data={
+                'csrf_token': csrf,
+                'report_type': rtype,
+                'format': 'csv',
+                'start_date': today_str,
+                'end_date': today_str,
+                'farm_filter': 'all'
+            })
+            self.assertEqual(res_csv.status_code, 200)
+            csv_txt = res_csv.data.decode('utf-8-sig')
+            self.assertIn("'=CMD|'/C calc'!A0", csv_txt)
+            self.assertIn("'@evil_tag", csv_txt)
+
+        conn = get_db_connection()
+        conn.execute("DELETE FROM cows WHERE ear_tag = '@evil_tag'")
+        conn.execute("DELETE FROM stillbirth_records WHERE cause = '=1+1'")
+        conn.commit()
+        conn.close()
+        self.logout()
+
+    # 18. МГНОВЕННЫЙ ОТЗЫВ СЕССИЙ ПОСЛЕ СМЕНЫ ПАРОЛЯ (edit_user и first_login_password)
+    def test_18_session_revocation_on_password_change(self):
+        # Создаём отдельного тестового пользователя, чтобы не трогать пароли общих фикстур
+        ok_reg, _ = register_user('rev_user', 'RevPass#123', 'farm', 'Ферма 1', must_change_password=True)
+        self.assertTrue(ok_reg)
+
+        conn = get_db_connection()
+        row = conn.execute("SELECT id FROM users WHERE username = 'rev_user'").fetchone()
+        self.assertIsNotNone(row)
+        rev_user_id = row['id']
+        conn.close()
+
+        client_a = self.app.test_client()
+        client_b = self.app.test_client()
+
+        def _client_login(cli, uname, pwd):
+            res_get = cli.get('/login')
+            tok = self._extract_csrf(res_get.data)
+            return cli.post('/login', data={'username': uname, 'password': pwd, 'csrf_token': tok}, follow_redirects=False)
+
+        # 1. Два параллельных входа под одним пользователем (must_change_password=True)
+        _client_login(client_a, 'rev_user', 'RevPass#123')
+        _client_login(client_b, 'rev_user', 'RevPass#123')
+
+        # Клиент A меняет первичный пароль — сам остаётся в системе, а клиент B должен быть мгновенно разлогинен
+        fl_get = client_a.get('/first_login_password')
+        fl_tok = self._extract_csrf(fl_get.data)
+        res_fl = client_a.post('/first_login_password', data={
+            'csrf_token': fl_tok,
+            'new_password': 'RevPassNew#456',
+            'confirm_password': 'RevPassNew#456',
+        }, follow_redirects=False)
+        self.assertEqual(res_fl.status_code, 302)
+        self.assertIn('/dashboard', res_fl.headers['Location'])
+        self.assertEqual(client_a.get('/cows').status_code, 200)
+
+        # Клиент B с прежней сессией немедленно отклоняется (и HTML, и API)
+        res_b_api = client_b.get('/api/cows')
+        self.assertEqual(res_b_api.status_code, 401)
+        self.assertEqual(res_b_api.get_json().get('error'), 'session_revoked')
+
+        _client_login(client_b, 'rev_user', 'RevPassNew#456')
+        self.assertEqual(client_b.get('/cows').status_code, 200)
+
+        # 2. Администратор сбрасывает пароль пользователя rev_user через /edit_user -> ВСЕ его сессии отзываются мгновенно
+        self.login('admin', 'AdminTest#123')
+        csrf_edit = self.get_csrf_token(f'/edit_user/{rev_user_id}')
+        res_edit = self.client.post(f'/edit_user/{rev_user_id}', data={
+            'csrf_token': csrf_edit,
+            'username': 'rev_user',
+            'password': 'AdminReset#789',
+            'user_type': 'farm',
+            'farm_name': 'Ферма 1',
+        }, follow_redirects=False)
+        self.assertEqual(res_edit.status_code, 302)
+        self.logout()
+
+        # Оба активных клиента (A и B) мгновенно теряют доступ без ожидания 60 секунд
+        res_a_cows = client_a.get('/cows', follow_redirects=False)
+        self.assertEqual(res_a_cows.status_code, 302)
+        self.assertIn('/login', res_a_cows.headers['Location'])
+
+        res_b_cows = client_b.get('/cows', follow_redirects=False)
+        self.assertEqual(res_b_cows.status_code, 302)
+        self.assertIn('/login', res_b_cows.headers['Location'])
+
+        # После повторного входа с новым паролем доступ восстанавливается
+        _client_login(client_a, 'rev_user', 'AdminReset#789')
+        self.assertEqual(client_a.get('/cows').status_code, 200)
+
+        # 3. Администратор меняет собственный пароль -> вторая сессия администратора отзывается, текущая продолжает работу
+        admin_other = self.app.test_client()
+        _client_login(admin_other, 'admin', 'AdminTest#123')
+        self.assertEqual(admin_other.get('/user_management').status_code, 200)
+
+        self.login('admin', 'AdminTest#123')
+        conn = get_db_connection()
+        admin_id = conn.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()['id']
+        conn.close()
+        csrf_adm = self.get_csrf_token(f'/edit_user/{admin_id}')
+        self.client.post(f'/edit_user/{admin_id}', data={
+            'csrf_token': csrf_adm,
+            'username': 'admin',
+            'password': 'AdminNew#2026',
+            'user_type': 'admin',
+        }, follow_redirects=False)
+
+        self.assertEqual(self.client.get('/user_management').status_code, 200)
+        res_other_adm = admin_other.get('/user_management', follow_redirects=False)
+        self.assertEqual(res_other_adm.status_code, 302)
+        self.assertIn('/login', res_other_adm.headers['Location'])
+
+        # Возвращаем исходный пароль admin и удаляем тестового rev_user
+        csrf_adm2 = self.get_csrf_token(f'/edit_user/{admin_id}')
+        self.client.post(f'/edit_user/{admin_id}', data={
+            'csrf_token': csrf_adm2,
+            'username': 'admin',
+            'password': 'AdminTest#123',
+            'user_type': 'admin',
+        }, follow_redirects=False)
+        self.logout()
+
+        conn = get_db_connection()
+        conn.execute("DELETE FROM users WHERE id = ?", (rev_user_id,))
+        conn.commit()
+        conn.close()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+

@@ -8,7 +8,7 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime
 from config import Config
 from database import get_db_connection, get_setting
-from domain import format_lactation_or_age
+from domain import format_lactation_or_age, sanitize_spreadsheet_cell
 
 def generate_csv_report(start_date, end_date, farm_name=None):
     """Генерация расширенного отчета в формате CSV"""
@@ -39,7 +39,7 @@ def generate_csv_report(start_date, end_date, farm_name=None):
     writer.writerow(['ID записи', 'Идентиф. номер AITS (РБ) / Инв. №', 'Ферма / МТФ', 'Категория', 'Причина (диагноз)', 'Дата выбытия', 'Лактация/Возраст', 'Живая масса (кг)', 'Заключение ветврача', 'Дата внесения'])
     
     for row in rows:
-        writer.writerow([
+        writer.writerow([sanitize_spreadsheet_cell(v) for v in [
             row['cow_id'],
             row['ear_tag'] or '-',
             row['farm_name'],
@@ -50,7 +50,7 @@ def generate_csv_report(start_date, end_date, farm_name=None):
             row['weight'] or '-',
             row['notes'] or '-',
             row['created_at']
-        ])
+        ]])
         
     output.seek(0)
     return output.getvalue()
@@ -88,7 +88,7 @@ def generate_simple_excel_report(start_date, end_date, farm_name=None):
         cell.alignment = Alignment(horizontal="center", vertical="center")
         
     for row in rows:
-        ws.append([
+        ws.append([sanitize_spreadsheet_cell(v) for v in [
             row['cow_id'],
             row['ear_tag'] or '-',
             row['farm_name'],
@@ -98,7 +98,7 @@ def generate_simple_excel_report(start_date, end_date, farm_name=None):
             format_lactation_or_age(row['lactation'], row['age_group']),
             row['weight'] or '-',
             row['notes'] or '-'
-        ])
+        ]])
         
     ws.column_dimensions['A'].width = 16
     ws.column_dimensions['B'].width = 22
@@ -227,7 +227,7 @@ def generate_form_209_apk_excel(start_date, end_date, farm_name=None):
         ]
         
         for col_idx, val in enumerate(vals, 1):
-            cell = ws.cell(row=row_num, column=col_idx, value=val)
+            cell = ws.cell(row=row_num, column=col_idx, value=sanitize_spreadsheet_cell(val))
             cell.font = body_font
             cell.border = thin_border
             if col_idx in [1, 2, 3, 7, 8, 9]:

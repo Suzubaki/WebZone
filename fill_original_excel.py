@@ -5,6 +5,7 @@ from openpyxl.styles import Font, Alignment, PatternFill
 from datetime import datetime
 from config import Config
 from database import get_db_connection, get_setting
+from domain import sanitize_spreadsheet_cell
 
 def generate_official_template_excel():
     """Генерация сводного официального отчета"""
@@ -66,7 +67,7 @@ def generate_official_template_excel():
         total_s += s
         total_all += total
 
-        ws.append([farm, p, v, s, total])
+        ws.append([sanitize_spreadsheet_cell(farm), p, v, s, total])
 
     # Итоговая строка
     ws.append(['ИТОГО ПО ХОЗЯЙСТВУ', total_p, total_v, total_s, total_all])

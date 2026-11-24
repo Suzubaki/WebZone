@@ -24,6 +24,7 @@ def _row_to_user(row):
         user_type=row['user_type'],
         farm_name=row['farm_name'],
         must_change_password=bool(row['must_change_password']) if 'must_change_password' in keys else False,
+        session_version=int(row['session_version'] or 1) if 'session_version' in keys else 1,
         created_at=row['created_at']
     )
 
@@ -86,8 +87,8 @@ def register_user(username, password, user_type, farm_name=None, must_change_pas
         flag = 1 if must_change_password else 0
 
         cursor.execute('''
-            INSERT INTO users (username, password_hash, user_type, farm_name, must_change_password)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO users (username, password_hash, user_type, farm_name, must_change_password, session_version)
+            VALUES (?, ?, ?, ?, ?, 1)
         ''', (username, password_hash, user_type, (farm_name or '').strip() or None, flag))
         return True, 'Пользователь успешно зарегистрирован'
 
@@ -107,7 +108,7 @@ def change_user_password(user_id, new_password):
     try:
         run_write_transaction(
             lambda _conn, cursor: cursor.execute(
-                'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?',
+                'UPDATE users SET password_hash = ?, must_change_password = 0, session_version = COALESCE(session_version, 1) + 1 WHERE id = ?',
                 (password_hash, user_id)
             )
         )
@@ -149,6 +150,7 @@ def update_user(user_id, username, password=None, user_type=None, farm_name=None
 
         update_fields = ['username = ?']
         params = [username]
+        bump_session_version = False
 
         if password:
             pwd_ok, pwd_msg = validate_password_policy(password)
@@ -157,12 +159,15 @@ def update_user(user_id, username, password=None, user_type=None, farm_name=None
             password_hash = User.create_password_hash(password)
             update_fields.append('password_hash = ?')
             params.append(password_hash)
+            bump_session_version = True
 
         if must_change_password is not None:
             update_fields.append('must_change_password = ?')
             params.append(1 if must_change_password else 0)
 
         if user_type:
+            if user_type != user['user_type']:
+                bump_session_version = True
             update_fields.append('user_type = ?')
             params.append(user_type)
 
@@ -172,6 +177,9 @@ def update_user(user_id, username, password=None, user_type=None, farm_name=None
             params.append(clean_farm)
         else:
             clean_farm = None
+
+        if bump_session_version:
+            update_fields.append('session_version = COALESCE(session_version, 1) + 1')
 
         params.append(user_id)
 

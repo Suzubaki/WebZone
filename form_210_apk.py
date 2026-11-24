@@ -6,7 +6,7 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime
 from config import Config
 from database import get_db_connection, get_setting
-from domain import format_lactation_or_age
+from domain import format_lactation_or_age, sanitize_spreadsheet_cell
 
 def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
     """
@@ -146,7 +146,7 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
         ]
         
         for col_idx, val in enumerate(vals, 1):
-            cell = ws.cell(row=row_num, column=col_idx, value=val)
+            cell = ws.cell(row=row_num, column=col_idx, value=sanitize_spreadsheet_cell(val))
             cell.font = body_font
             cell.border = thin_border
             if col_idx in [1, 2, 5, 6, 7, 9]:

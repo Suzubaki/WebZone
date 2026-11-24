@@ -127,11 +127,13 @@ def login():
         if user:
             _clear_failed_auth(client_ip)
 
+            session.clear()
             session['user_id'] = user.id
             session['username'] = user.username
             session['user_type'] = user.user_type
             session['farm_name'] = user.farm_name
             session['must_change_password'] = bool(user.must_change_password)
+            session['session_version'] = user.session_version
             session['_user_sync_ts'] = time.time()
 
             log_audit_event(
@@ -183,7 +185,9 @@ def first_login_password():
             flash(msg, 'danger')
             return render_template('first_login_password.html', username=user.username), 400
 
+        updated_user = get_user_by_id(user.id)
         session['must_change_password'] = False
+        session['session_version'] = updated_user.session_version if updated_user else (user.session_version + 1)
         session['_user_sync_ts'] = time.time()
         log_audit_event(
             username=user.username,
@@ -285,6 +289,14 @@ def edit_user(user_id):
             farm_name
         )
         if success:
+            if user_id == session.get('user_id'):
+                updated_self = get_user_by_id(user_id)
+                if updated_self:
+                    session['username'] = updated_self.username
+                    session['user_type'] = updated_self.user_type
+                    session['farm_name'] = updated_self.farm_name
+                    session['session_version'] = updated_self.session_version
+                    session['_user_sync_ts'] = time.time()
             log_audit_event(
                 username=session.get('username'),
                 farm_name='Admin',

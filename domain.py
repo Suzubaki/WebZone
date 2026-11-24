@@ -146,6 +146,26 @@ def format_lactation_or_age(lactation, age_group=None):
     return '-'
 
 
+_FORMULA_TRIGGER_CHARS = ('=', '+', '-', '@', '\t', '\r')
+
+
+def sanitize_spreadsheet_cell(value):
+    """
+    Защита от Excel/CSV Formula Injection (CWE-1236):
+    нейтрализует строковые значения, начинающиеся с опасных символов формул
+    (=, +, -, @, табуляция, возврат каретки), включая варианты с ведущими пробелами.
+    """
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    text = str(value)
+    if not text or text in ('-', '—'):
+        return text
+    stripped = text.lstrip(' \t\r\n')
+    if text[0] in _FORMULA_TRIGGER_CHARS or (stripped and stripped[0] in ('=', '+', '-', '@') and stripped != '-'):
+        return "'" + text
+    return text
+
+
 def _parse_bounded_int(raw, label, min_val, max_val, errors):
     if raw is None or str(raw).strip() == '':
         return None

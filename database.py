@@ -281,6 +281,7 @@ def init_db():
             user_type TEXT NOT NULL,
             farm_name TEXT,
             must_change_password INTEGER DEFAULT 0,
+            session_version INTEGER NOT NULL DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -288,6 +289,8 @@ def init_db():
     user_cols = {row['name'] for row in cursor.fetchall()}
     if 'must_change_password' not in user_cols:
         cursor.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0")
+    if 'session_version' not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1")
 
     # 2. Таблица коров (учет выбытия)
     cursor.execute('''

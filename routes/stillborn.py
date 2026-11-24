@@ -11,7 +11,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 from config import Config
 from database import get_db_connection, log_audit_event, run_write_transaction, get_setting
-from domain import normalize_date, validate_stillborn_payload
+from domain import normalize_date, validate_stillborn_payload, sanitize_spreadsheet_cell
 from cow_queries import insert_stillborn_record
 from .auth import login_required
 
@@ -443,7 +443,7 @@ def export_stillborn_excel():
             r['notes'] or ''
         ]
         for col_idx, val in enumerate(data, start=1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell = ws.cell(row=row_idx, column=col_idx, value=sanitize_spreadsheet_cell(val))
             cell.font = body_font
             cell.border = thin_border
             if col_idx in [1, 2, 3, 8, 10]:

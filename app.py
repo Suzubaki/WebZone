@@ -288,18 +288,31 @@ def sync_current_user_session():
         return None
     ensure_app_initialized()
     if 'user_id' in session:
-        now = time.time()
-        last_sync = session.get('_user_sync_ts', 0)
-        if now - last_sync >= 60:
-            user = get_user_by_id(session['user_id'])
-            if user is None:
-                session.clear()
-                return redirect(url_for('auth.login'))
-            session['farm_name'] = user.farm_name
-            session['username'] = user.username
-            session['user_type'] = user.user_type
-            session['must_change_password'] = bool(user.must_change_password)
-            session['_user_sync_ts'] = now
+        user = get_user_by_id(session['user_id'])
+        sess_ver = session.get('session_version')
+        if user is None or sess_ver is None or sess_ver != user.session_version:
+            session.clear()
+            if request.path == '/login':
+                return None
+            is_api_or_ajax = (
+                request.is_json
+                or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+                or request.path.startswith('/api/')
+            )
+            if is_api_or_ajax:
+                return jsonify({
+                    'success': False,
+                    'error': 'session_revoked',
+                    'message': 'Сессия недействительна. Выполните вход заново.'
+                }), 401
+            flash('Сессия завершена после изменения учётных данных. Выполните вход заново.', 'warning')
+            return redirect(url_for('auth.login'))
+
+        session['farm_name'] = user.farm_name
+        session['username'] = user.username
+        session['user_type'] = user.user_type
+        session['must_change_password'] = bool(user.must_change_password)
+        session['_user_sync_ts'] = time.time()
 
         if session.get('must_change_password') and request.path not in ('/first_login_password', '/logout'):
             return redirect(url_for('auth.first_login_password'))

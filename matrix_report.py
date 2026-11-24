@@ -5,6 +5,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from datetime import datetime
 from database import get_db_connection, get_reasons_for_category
+from domain import sanitize_spreadsheet_cell
 
 def generate_matrix_excel_report(category, start_date=None, end_date=None, farm_filter=None):
     """
@@ -81,7 +82,7 @@ def generate_matrix_excel_report(category, start_date=None, end_date=None, farm_
     col_num = 2
     farm_col_map = {}
     for farm in farms:
-        cell = ws.cell(row=row_num, column=col_num, value=farm)
+        cell = ws.cell(row=row_num, column=col_num, value=sanitize_spreadsheet_cell(farm))
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -130,7 +131,7 @@ def generate_matrix_excel_report(category, start_date=None, end_date=None, farm_
     current_row = 6
 
     for reason in reasons:
-        cell_reason = ws.cell(row=current_row, column=1, value=reason)
+        cell_reason = ws.cell(row=current_row, column=1, value=sanitize_spreadsheet_cell(reason))
         cell_reason.font = regular_font
         cell_reason.alignment = align_left
         cell_reason.border = thin_border

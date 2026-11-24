@@ -18,6 +18,7 @@ class User:
     farm_name: Optional[str] = None
     id: Optional[int] = None
     must_change_password: bool = False
+    session_version: int = 1
     created_at: object = field(default_factory=_utc_now)
 
     def __repr__(self):
