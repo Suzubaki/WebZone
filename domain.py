@@ -128,6 +128,24 @@ def compute_lactation_phase(age_group, lactation_days, lactation=None):
     return 'Фаза не указана'
 
 
+def format_lactation_or_age(lactation, age_group=None):
+    """Форматирует значение для графы «Лактация / Возраст» в отчётах АПК."""
+    lact_num = None
+    if lactation is not None and str(lactation).strip() != '':
+        try:
+            lact_num = int(float(str(lactation).strip()))
+        except (ValueError, TypeError):
+            lact_num = None
+
+    if lact_num is not None and lact_num > 0:
+        return f"{lact_num} лакт."
+
+    ag = (age_group or '').strip()
+    if ag:
+        return ag
+    return '-'
+
+
 def _parse_bounded_int(raw, label, min_val, max_val, errors):
     if raw is None or str(raw).strip() == '':
         return None
@@ -296,8 +314,8 @@ def validate_stillborn_payload(data, today_date=None):
     mother_tag = (data.get('mother_tag') if data.get('mother_tag') is not None else data.get('ear_tag') or '').strip()[:50] or None
     mother_group = (data.get('mother_group') or '').strip() or Config.DEFAULT_STILLBORN_MOTHER_GROUP
     fetus_sex = (data.get('fetus_sex') or '').strip() or 'Не определён'
-    mother_condition = (data.get('mother_condition') or '').strip() or Config.MOTHER_CONDITIONS[0]
-    attendant = (data.get('attendant') or '').strip()[:120] or Config.DEFAULT_ATTENDANT
+    mother_condition = (data.get('mother_condition') or '').strip()[:120] or None
+    attendant = (data.get('attendant') or '').strip()[:120] or None
     notes = (data.get('notes') or '').strip()[:1000] or None
 
     cleaned = {
@@ -309,7 +327,7 @@ def validate_stillborn_payload(data, today_date=None):
         'fetus_weight': fetus_weight if fetus_weight is not None else def_w,
         'gestation_days': gestation_days if gestation_days is not None else def_gest,
         'cause': cause[:255],
-        'mother_condition': mother_condition[:120],
+        'mother_condition': mother_condition,
         'attendant': attendant,
         'notes': notes,
     }

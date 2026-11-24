@@ -71,30 +71,19 @@
                             </h6>
                         </div>
 
-                        <div class="col-md-4">
+                        <div class="col-md-6">
                             <label for="mother_tag" class="form-label fw-semibold">AITS / Ушная бирка матери</label>
                             <input type="text" class="form-control" id="mother_tag" name="mother_tag" 
                                    value="{{ (record.mother_tag or '') if record else '' }}" placeholder="Например, BY 04 12345678">
                             <div class="form-text small">Инвентарный номер дойной коровы / нетели</div>
                         </div>
 
-                        <div class="col-md-4">
+                        <div class="col-md-6">
                             <label for="mother_group" class="form-label fw-semibold">Группа коровы-матери</label>
                             <select class="form-select" id="mother_group" name="mother_group">
                                 {% for mg in mother_groups %}
                                 <option value="{{ mg }}" {% if (record.mother_group if record else '') == mg %}selected{% endif %}>
                                     {{ mg }}
-                                </option>
-                                {% endfor %}
-                            </select>
-                        </div>
-
-                        <div class="col-md-4">
-                            <label for="mother_condition" class="form-label fw-semibold">Состояние матери после отёла</label>
-                            <select class="form-select" id="mother_condition" name="mother_condition">
-                                {% for mc in mother_conditions %}
-                                <option value="{{ mc }}" {% if (record.mother_condition if record else '') == mc %}selected{% endif %}>
-                                    {{ mc }}
                                 </option>
                                 {% endfor %}
                             </select>
@@ -147,17 +136,11 @@
                         <!-- Блок 4: Заключение -->
                         <div class="col-12 mt-3">
                             <h6 class="text-uppercase text-secondary fw-bold small border-bottom pb-1 mb-2">
-                                4. Родовспоможение и заключение
+                                4. Заключение и примечание
                             </h6>
                         </div>
 
-                        <div class="col-md-4">
-                            <label for="attendant" class="form-label fw-semibold">Принял отёл / Ветврач</label>
-                            <input type="text" class="form-control" id="attendant" name="attendant" 
-                                   value="{{ (record.attendant or '') if record else 'Дежурный ветврач' }}" placeholder="ФИО специалиста">
-                        </div>
-
-                        <div class="col-md-8">
+                        <div class="col-md-12">
                             <label for="notes" class="form-label fw-semibold">Заключение ветеринарной комиссии / Примечание</label>
                             <input type="text" class="form-control" id="notes" name="notes" 
                                    value="{{ (record.notes or '') if record else '' }}" placeholder="Особенности отёла, патологоанатомические признаки, рекомендации...">

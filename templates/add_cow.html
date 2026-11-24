@@ -273,27 +273,13 @@
                                 </div>
                                 <input type="hidden" name="age_group" value="Мертворождённый телёнок">
 
-                                <div class="col-md-5">
+                                <div class="col-md-12">
                                     <label for="sb_cause" class="form-label fw-semibold">Причина гибели плода (диагноз)</label>
                                     <select class="form-select" id="sb_cause" name="cause">
                                         {% for c in stillborn_causes %}
                                         <option value="{{ c }}" {% if sb_fd and sb_fd.get('cause') == c %}selected{% endif %}>{{ c }}</option>
                                         {% endfor %}
                                     </select>
-                                </div>
-
-                                <div class="col-md-4">
-                                    <label for="sb_mother_condition" class="form-label fw-semibold">Состояние матери после отёла</label>
-                                    <select class="form-select" id="sb_mother_condition" name="mother_condition">
-                                        {% for mc in mother_conditions %}
-                                        <option value="{{ mc }}" {% if sb_fd and sb_fd.get('mother_condition') == mc %}selected{% endif %}>{{ mc }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </div>
-
-                                <div class="col-md-3">
-                                    <label for="sb_attendant" class="form-label fw-semibold">Принял отёл / Ветврач</label>
-                                    <input type="text" class="form-control" id="sb_attendant" name="attendant" value="{{ sb_fd.get('attendant', default_attendant) if sb_fd else default_attendant }}" placeholder="ФИО специалиста">
                                 </div>
 
                                 <div class="col-12 {% if not (sb_fd and sb_fd.get('cause') == 'Другое') %}d-none{% endif %}" id="sbCustomCauseBlock">

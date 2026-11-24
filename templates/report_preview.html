@@ -88,7 +88,7 @@
                             <th>Подразделение / МТФ</th>
                             <th>Вид выбытия (РБ)</th>
                             <th>Причина / Диагноз</th>
-                            <th>Лактация</th>
+                            <th>Лактация / Возраст</th>
                             <th>Живая масса (кг)</th>
                             <th>Дата выбытия</th>
                         </tr>
@@ -102,7 +102,7 @@
                             <td>{{ cow.farm_name }}</td>
                             <td>{{ cow.category.capitalize() }}</td>
                             <td>{{ cow.reason }}</td>
-                            <td class="text-center">{{ cow.lactation or '-' }}</td>
+                            <td class="text-center">{% if cow.lactation and cow.lactation > 0 %}{{ cow.lactation }} лакт.{% else %}{{ cow.age_group or '-' }}{% endif %}</td>
                             <td class="text-center">{{ cow.weight or '-' }}</td>
                             <td class="text-center">{{ cow.disposal_date }}</td>
                         </tr>

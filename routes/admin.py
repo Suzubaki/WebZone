@@ -1,12 +1,14 @@
 # routes/admin.py - Системное администрирование, журнал аудита и резервные копии
 import logging
+import os
 from flask import (
     Blueprint, render_template, request, redirect, 
-    url_for, flash, session, jsonify, Response
+    url_for, flash, session, jsonify, Response, abort, current_app
 )
 from config import Config
 from database import get_db_connection, log_audit_event, get_all_settings, invalidate_settings_cache, run_write_transaction
 from backup import create_db_backup_bytes, restore_db_from_upload
+from scheduled_backup import get_backup_dir, is_valid_backup_filename, list_saved_backups, maybe_run_auto_backup
 from .auth import login_required, admin_required
 
 logger = logging.getLogger('cattle_app')
@@ -115,12 +117,38 @@ def audit_log():
 @admin_required
 def backup():
     """Панель управления резервными копиями базы данных"""
+    if not current_app.config.get('TESTING') or os.environ.get('ENABLE_AUTO_BACKUP_IN_TESTS'):
+        maybe_run_auto_backup(force_check=True)
+    auto_backups = list_saved_backups()
+
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM audit_logs WHERE action = 'BACKUP' ORDER BY created_at DESC LIMIT 20")
     backup_logs = [dict(r) for r in cursor.fetchall()]
     conn.close()
-    return render_template('backup.html', backup_logs=backup_logs)
+    return render_template('backup.html', backup_logs=backup_logs, auto_backups=auto_backups)
+
+@admin_bp.route('/backup/archive/<filename>')
+@admin_required
+def download_archived_backup(filename):
+    """Безопасное скачивание сохранённой еженедельной резервной копии из папки backups"""
+    if not is_valid_backup_filename(filename):
+        abort(404)
+    backup_path = os.path.join(get_backup_dir(), filename)
+    if not os.path.isfile(backup_path):
+        abort(404)
+    with open(backup_path, 'rb') as f:
+        data = f.read()
+    return Response(
+        data,
+        status=200,
+        mimetype='application/octet-stream',
+        headers={
+            'Content-Disposition': f'attachment; filename="{filename}"',
+            'Content-Length': str(len(data)),
+            'Cache-Control': 'no-store',
+        }
+    )
 
 @admin_bp.route('/backup/download')
 @admin_required

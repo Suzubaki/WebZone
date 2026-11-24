@@ -68,7 +68,7 @@
                             <th>Идент. № (AITS / Инв.)</th>
                             <th>Подразделение</th>
                             <th>Порода</th>
-                            <th>Лактация</th>
+                            <th>Лактация / Возраст</th>
                             <th>Живая масса (кг)</th>
                             <th>Удой за посл. лактацию (кг)</th>
                             <th>Причина выбраковки (диагноз)</th>
@@ -82,7 +82,7 @@
                             <td class="text-center fw-bold">{{ cow.ear_tag or cow.cow_id }}</td>
                             <td>{{ cow.farm_name }}</td>
                             <td>{{ cow.breed or default_breed or 'Черно-пёстрая белорусской селекции' }}</td>
-                            <td class="text-center">{{ cow.lactation or '-' }}</td>
+                            <td class="text-center">{% if cow.lactation and cow.lactation > 0 %}{{ cow.lactation }} лакт.{% else %}{{ cow.age_group or '-' }}{% endif %}</td>
                             <td class="text-center">{{ cow.weight or '-' }}</td>
                             <td class="text-center">{{ cow.milk_yield or '-' }}</td>
                             <td>{{ cow.reason }}</td>

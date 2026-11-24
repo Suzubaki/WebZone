@@ -136,8 +136,6 @@
                                 <th>Вес (кг)</th>
                                 <th>Срок (дн)</th>
                                 <th>Причина гибели плода</th>
-                                <th>Состояние матери</th>
-                                <th>Принял отёл</th>
                                 <th class="text-end" style="width: 100px;">Действия</th>
                             </tr>
                         </thead>
@@ -187,16 +185,6 @@
                                             <small class="d-block text-muted" style="font-size: 0.78rem;">{{ r.notes }}</small>
                                         {% endif %}
                                     </td>
-                                    <td>
-                                        {% if 'Здорова' in (r.mother_condition or '') %}
-                                            <span class="badge bg-success-subtle text-success border border-success-subtle">{{ r.mother_condition }}</span>
-                                        {% elif 'лечении' in (r.mother_condition or '') %}
-                                            <span class="badge bg-warning-subtle text-dark border border-warning-subtle">{{ r.mother_condition }}</span>
-                                        {% else %}
-                                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">{{ r.mother_condition or 'Здорова' }}</span>
-                                        {% endif %}
-                                    </td>
-                                    <td><small class="text-muted">{{ r.attendant or '—' }}</small></td>
                                     <td class="text-end text-nowrap">
                                         <a href="{{ url_for('stillborn.edit_stillborn', record_id=r.id) }}" class="btn btn-outline-primary btn-sm" title="Редактировать акт">
                                             <i class="bi bi-pencil"></i>
@@ -215,7 +203,7 @@
                                 {% endfor %}
                             {% else %}
                                 <tr>
-                                    <td colspan="13" class="text-center py-5 text-muted">
+                                    <td colspan="11" class="text-center py-5 text-muted">
                                         <i class="bi bi-inbox fs-1 d-block mb-2"></i>
                                         Записей мертворождений и абортов не найдено
                                     </td>

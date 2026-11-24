@@ -225,6 +225,17 @@ class CattleSystemTestCase(unittest.TestCase):
         res_add = self.client.post('/add_stillborn', data=sb_payload, follow_redirects=True)
         self.assertEqual(res_add.status_code, 200)
         self.assertIn(b'BY777666555', res_add.data)
+        html_sb_list = res_add.data.decode('utf-8')
+        self.assertNotIn('Состояние матери', html_sb_list)
+        self.assertNotIn('Принял отёл', html_sb_list)
+
+        html_add_sb = self.client.get('/add_stillborn').data.decode('utf-8')
+        self.assertNotIn('mother_condition', html_add_sb)
+        self.assertNotIn('attendant', html_add_sb)
+
+        html_add_cow = self.client.get('/add_cow').data.decode('utf-8')
+        self.assertNotIn('sb_mother_condition', html_add_cow)
+        self.assertNotIn('sb_attendant', html_add_cow)
         self.logout()
 
         self.login('admin', 'AdminTest#123')
@@ -243,24 +254,99 @@ class CattleSystemTestCase(unittest.TestCase):
 
     # 6. ТЕСТЫ ОТЧЁТОВ И ЭКСПОРТА
     def test_06_reports_and_export(self):
+        import openpyxl
+        today_str = datetime.now().strftime('%Y-%m-%d')
+
+        self.login('farm1', 'Farm1Test#123')
+        csrf_add = self.get_csrf_token('/add_cow')
+        self.client.post('/add_cow', data={
+            'csrf_token': csrf_add,
+            'form_mode': 'cow',
+            'category': 'падёж',
+            'reason': 'Диспепсия телят',
+            'disposal_date': today_str,
+            'ear_tag': 'BY_CALF_209',
+            'age_group': 'Телята (до 6 мес.)',
+            'lactation': '0',
+            'weight': '45'
+        }, follow_redirects=True)
+        self.client.post('/add_cow', data={
+            'csrf_token': csrf_add,
+            'form_mode': 'cow',
+            'category': 'выбраковка',
+            'reason': 'Мастит хронический (атрофия долей)',
+            'disposal_date': today_str,
+            'ear_tag': 'BY_COW_210',
+            'age_group': 'Полновозрастные коровы (2+ лакт.)',
+            'lactation': '3',
+            'weight': '520',
+            'milk_yield': '6500'
+        }, follow_redirects=True)
+        self.logout()
+
         self.login('admin', 'AdminTest#123')
         csrf = self.get_csrf_token('/reports')
 
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        res_209 = self.client.post('/generate_report', data={
+            'csrf_token': csrf,
+            'report_type': 'form_209_apk',
+            'format': 'excel',
+            'start_date': today_str,
+            'end_date': today_str,
+            'farm_filter': 'all'
+        })
+        self.assertEqual(res_209.status_code, 200)
+        wb_209 = openpyxl.load_workbook(io.BytesIO(res_209.data))
+        ws_209 = wb_209.active
+        vals_209 = [ws_209.cell(row=r, column=7).value for r in range(10, ws_209.max_row + 1)]
+        self.assertIn('Телята (до 6 мес.)', vals_209)
+        self.assertIn('3 лакт.', vals_209)
+
         res_210 = self.client.post('/generate_report', data={
             'csrf_token': csrf,
             'report_type': 'form_210_apk',
-            'report_format': 'excel',
-            'start_date': '2026-01-01',
+            'format': 'excel',
+            'start_date': today_str,
             'end_date': today_str,
             'farm_filter': 'all'
         })
         self.assertEqual(res_210.status_code, 200)
         self.assertEqual(res_210.content_type, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        wb_210 = openpyxl.load_workbook(io.BytesIO(res_210.data))
+        ws_210 = wb_210.active
+        vals_210 = [ws_210.cell(row=r, column=5).value for r in range(11, ws_210.max_row + 1)]
+        self.assertIn('3 лакт.', vals_210)
+
+        res_simple = self.client.post('/generate_report', data={
+            'csrf_token': csrf,
+            'report_type': 'simple',
+            'format': 'excel',
+            'start_date': today_str,
+            'end_date': today_str,
+            'farm_filter': 'all'
+        })
+        self.assertEqual(res_simple.status_code, 200)
+        wb_simple = openpyxl.load_workbook(io.BytesIO(res_simple.data))
+        ws_simple = wb_simple.active
+        self.assertEqual(ws_simple.cell(row=1, column=7).value, 'Лактация / Возраст')
+        vals_simple = [ws_simple.cell(row=r, column=7).value for r in range(2, ws_simple.max_row + 1)]
+        self.assertIn('Телята (до 6 мес.)', vals_simple)
+
+        res_svodka = self.client.post('/generate_original_excel', data={'csrf_token': csrf})
+        self.assertEqual(res_svodka.status_code, 200)
+        wb_svodka = openpyxl.load_workbook(io.BytesIO(res_svodka.data))
+        ws_svodka = wb_svodka.active
+        svodka_headers = [ws_svodka.cell(row=3, column=c).value for c in range(1, 6)]
+        self.assertEqual(svodka_headers[4], 'Выбыло, всего (гол.)')
 
         res_sb_excel = self.client.get('/export_stillborn_excel')
         self.assertEqual(res_sb_excel.status_code, 200)
         self.assertEqual(res_sb_excel.content_type, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+        conn = get_db_connection()
+        conn.execute("DELETE FROM cows WHERE ear_tag IN ('BY_CALF_209', 'BY_COW_210')")
+        conn.commit()
+        conn.close()
         self.logout()
 
     # 7. ТЕСТЫ CSRF И АТОМАРНОСТИ ID
@@ -1056,6 +1142,42 @@ class CattleSystemTestCase(unittest.TestCase):
             self.assertIsNotNone(row)
             self.assertIn('еженедельная', row['details'])
             conn.close()
+
+        # Проверка встроенного автобэкапа внутри веб-приложения (без Tasks/cron) и скачивания из архива
+        import scheduled_backup as sb_mod
+        saved_base_dir = Config.BASE_DIR
+        saved_env_ab = os.environ.get('ENABLE_AUTO_BACKUP_IN_TESTS')
+        with tempfile.TemporaryDirectory() as web_bak_root:
+            Config.BASE_DIR = web_bak_root
+            sb_mod._last_check_by_target.clear()
+            os.environ['ENABLE_AUTO_BACKUP_IN_TESTS'] = '1'
+            try:
+                self.login('admin', 'AdminTest#123')
+                res_bak_page = self.client.get('/backup')
+                self.assertEqual(res_bak_page.status_code, 200)
+                html_bak = res_bak_page.data.decode('utf-8')
+                self.assertIn('Автоматический еженедельный архив', html_bak)
+
+                saved = sb_mod.list_saved_backups()
+                self.assertEqual(len(saved), 1)
+                fname = saved[0]['filename']
+                self.assertIn(fname, html_bak)
+
+                res_arch_dl = self.client.get(f'/backup/archive/{fname}')
+                self.assertEqual(res_arch_dl.status_code, 200)
+                self.assertTrue(res_arch_dl.data.startswith(b'SQLite format 3'))
+
+                # Защита архивного скачивания от Path Traversal и посторонних имён
+                self.assertEqual(self.client.get('/backup/archive/../../config.py').status_code, 404)
+                self.assertEqual(self.client.get('/backup/archive/evil.sqlite').status_code, 404)
+                self.logout()
+            finally:
+                Config.BASE_DIR = saved_base_dir
+                sb_mod._last_check_by_target.clear()
+                if saved_env_ab is None:
+                    os.environ.pop('ENABLE_AUTO_BACKUP_IN_TESTS', None)
+                else:
+                    os.environ['ENABLE_AUTO_BACKUP_IN_TESTS'] = saved_env_ab
 
 
 if __name__ == '__main__':

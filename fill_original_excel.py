@@ -26,7 +26,7 @@ def generate_official_template_excel():
     ws['A1'].font = Font(size=14, bold=True)
     ws['A1'].alignment = Alignment(horizontal='center')
     
-    headers = ['Ферма', 'Падёж (гол.)', 'Выбраковка (гол.)', 'Санитарный брак (гол.)', 'Пало, всего (гол.)']
+    headers = ['Ферма', 'Падёж (гол.)', 'Выбраковка (гол.)', 'Санитарный брак (гол.)', 'Выбыло, всего (гол.)']
     ws.append([])
     ws.append(headers)
     
@@ -79,6 +79,6 @@ def generate_official_template_excel():
     ws.column_dimensions['B'].width = 16
     ws.column_dimensions['C'].width = 18
     ws.column_dimensions['D'].width = 22
-    ws.column_dimensions['E'].width = 18
+    ws.column_dimensions['E'].width = 22
 
     return wb

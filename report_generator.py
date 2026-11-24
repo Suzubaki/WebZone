@@ -8,6 +8,7 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime
 from config import Config
 from database import get_db_connection, get_setting
+from domain import format_lactation_or_age
 
 def generate_csv_report(start_date, end_date, farm_name=None):
     """Генерация расширенного отчета в формате CSV"""
@@ -22,7 +23,7 @@ def generate_csv_report(start_date, end_date, farm_name=None):
         params.append(farm_name)
         
     cursor.execute(f'''
-        SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, weight, notes, created_at 
+        SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, age_group, weight, notes, created_at 
         FROM cows 
         {where_clause}
         ORDER BY disposal_date DESC
@@ -45,7 +46,7 @@ def generate_csv_report(start_date, end_date, farm_name=None):
             row['category'],
             row['reason'],
             row['disposal_date'],
-            row['lactation'] or '-',
+            format_lactation_or_age(row['lactation'], row['age_group']),
             row['weight'] or '-',
             row['notes'] or '-',
             row['created_at']
@@ -67,7 +68,7 @@ def generate_simple_excel_report(start_date, end_date, farm_name=None):
         params.append(farm_name)
         
     cursor.execute(f'''
-        SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, weight, notes 
+        SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, age_group, weight, notes 
         FROM cows 
         {where_clause}
         ORDER BY farm_name, disposal_date DESC
@@ -80,7 +81,7 @@ def generate_simple_excel_report(start_date, end_date, farm_name=None):
     ws = wb.active
     ws.title = "Ведомость выбытия"
     
-    ws.append(['ID записи', 'Идентиф. номер AITS (РБ) / Бирка', 'Ферма / МТФ', 'Категория', 'Причина выбытия', 'Дата выбытия', 'Лактация', 'Масса (кг)', 'Заключение ветврача'])
+    ws.append(['ID записи', 'Идентиф. номер AITS (РБ) / Бирка', 'Ферма / МТФ', 'Категория', 'Причина выбытия', 'Дата выбытия', 'Лактация / Возраст', 'Масса (кг)', 'Заключение ветврача'])
     for cell in ws[1]:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill(start_color="1E40AF", end_color="1E40AF", fill_type="solid")
@@ -94,7 +95,7 @@ def generate_simple_excel_report(start_date, end_date, farm_name=None):
             row['category'],
             row['reason'],
             row['disposal_date'],
-            row['lactation'] or '-',
+            format_lactation_or_age(row['lactation'], row['age_group']),
             row['weight'] or '-',
             row['notes'] or '-'
         ])
@@ -105,7 +106,7 @@ def generate_simple_excel_report(start_date, end_date, farm_name=None):
     ws.column_dimensions['D'].width = 16
     ws.column_dimensions['E'].width = 28
     ws.column_dimensions['F'].width = 14
-    ws.column_dimensions['G'].width = 12
+    ws.column_dimensions['G'].width = 24
     ws.column_dimensions['H'].width = 14
     ws.column_dimensions['I'].width = 30
         
@@ -126,7 +127,7 @@ def generate_form_209_apk_excel(start_date, end_date, farm_name=None):
         params.append(farm_name)
         
     cursor.execute(f'''
-        SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, weight, notes 
+        SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, age_group, weight, notes 
         FROM cows 
         {where_clause}
         ORDER BY disposal_date ASC
@@ -186,7 +187,7 @@ def generate_form_209_apk_excel(start_date, end_date, farm_name=None):
         ('Подразделение / МТФ', 18),
         ('Вид выбытия (РБ)', 16),
         ('Причина выбытия (диагноз)', 25),
-        ('Лактация / Возраст', 15),
+        ('Лактация / Возраст', 24),
         ('Живая масса (кг)', 14),
         ('Дата выбытия', 13)
     ]
@@ -203,8 +204,8 @@ def generate_form_209_apk_excel(start_date, end_date, farm_name=None):
     ws.row_dimensions[row_num].height = 28
     
     total_weight = 0.0
-    align_center = Alignment(horizontal='center', vertical='center')
-    align_left = Alignment(horizontal='left', vertical='center')
+    align_center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    align_left = Alignment(horizontal='left', vertical='center', wrap_text=True)
 
     for idx, r in enumerate(rows, 1):
         row_num += 1
@@ -220,7 +221,7 @@ def generate_form_209_apk_excel(start_date, end_date, farm_name=None):
             r['farm_name'],
             r['category'].capitalize(),
             r['reason'],
-            r['lactation'] or '-',
+            format_lactation_or_age(r['lactation'], r['age_group']),
             r['weight'] if r['weight'] is not None else '-',
             r['disposal_date']
         ]

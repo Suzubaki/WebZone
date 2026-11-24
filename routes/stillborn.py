@@ -61,9 +61,9 @@ def stillborn_list():
         params.append(end_date)
         
     if search:
-        conditions.append("(LOWER(COALESCE(record_code,'')) LIKE ? OR LOWER(COALESCE(mother_tag,'')) LIKE ? OR LOWER(COALESCE(cause,'')) LIKE ? OR LOWER(COALESCE(farm_name,'')) LIKE ? OR LOWER(COALESCE(attendant,'')) LIKE ?)")
+        conditions.append("(LOWER(COALESCE(record_code,'')) LIKE ? OR LOWER(COALESCE(mother_tag,'')) LIKE ? OR LOWER(COALESCE(cause,'')) LIKE ? OR LOWER(COALESCE(farm_name,'')) LIKE ?)")
         wild = f"%{search}%"
-        params.extend([wild, wild, wild, wild, wild])
+        params.extend([wild, wild, wild, wild])
         
     where_sql = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     
@@ -155,7 +155,6 @@ def add_stillborn():
                                    event_types=Config.STILLBIRTH_EVENT_TYPES,
                                    causes=Config.STILLBIRTH_CAUSES,
                                    fetus_sexes=Config.FETUS_SEXES,
-                                   mother_conditions=Config.MOTHER_CONDITIONS,
                                    mother_groups=Config.MOTHER_GROUPS)
 
         def _tx_add_sb(_conn, cursor):
@@ -187,7 +186,6 @@ def add_stillborn():
                            event_types=Config.STILLBIRTH_EVENT_TYPES,
                            causes=Config.STILLBIRTH_CAUSES,
                            fetus_sexes=Config.FETUS_SEXES,
-                           mother_conditions=Config.MOTHER_CONDITIONS,
                            mother_groups=Config.MOTHER_GROUPS)
 
 @stillborn_bp.route('/edit_stillborn/<int:record_id>', methods=['GET', 'POST'])
@@ -232,7 +230,6 @@ def edit_stillborn(record_id):
                                    event_types=Config.STILLBIRTH_EVENT_TYPES,
                                    causes=Config.STILLBIRTH_CAUSES,
                                    fetus_sexes=Config.FETUS_SEXES,
-                                   mother_conditions=Config.MOTHER_CONDITIONS,
                                    mother_groups=Config.MOTHER_GROUPS)
 
         conn.close()
@@ -248,8 +245,6 @@ def edit_stillborn(record_id):
                     fetus_weight = ?,
                     gestation_days = ?,
                     cause = ?,
-                    mother_condition = ?,
-                    attendant = ?,
                     notes = ?,
                     updated_at = CURRENT_TIMESTAMP,
                     updated_by = ?
@@ -257,8 +252,8 @@ def edit_stillborn(record_id):
             ''', (
                 cleaned['event_date'], cleaned['mother_tag'], cleaned['mother_group'],
                 cleaned['event_type'], cleaned['fetus_sex'], cleaned['fetus_weight'],
-                cleaned['gestation_days'], cleaned['cause'], cleaned['mother_condition'],
-                cleaned['attendant'], cleaned['notes'], session.get('user_id'), record_id
+                cleaned['gestation_days'], cleaned['cause'],
+                cleaned['notes'], session.get('user_id'), record_id
             ))
             log_audit_event(
                 username=session.get('username'),
@@ -287,7 +282,6 @@ def edit_stillborn(record_id):
                            event_types=Config.STILLBIRTH_EVENT_TYPES,
                            causes=Config.STILLBIRTH_CAUSES,
                            fetus_sexes=Config.FETUS_SEXES,
-                           mother_conditions=Config.MOTHER_CONDITIONS,
                            mother_groups=Config.MOTHER_GROUPS)
 
 @stillborn_bp.route('/delete_stillborn/<int:record_id>', methods=['POST'])
@@ -370,9 +364,9 @@ def export_stillborn_excel():
         params.append(end_date)
 
     if search:
-        conditions.append("(LOWER(COALESCE(record_code,'')) LIKE ? OR LOWER(COALESCE(mother_tag,'')) LIKE ? OR LOWER(COALESCE(cause,'')) LIKE ? OR LOWER(COALESCE(farm_name,'')) LIKE ? OR LOWER(COALESCE(attendant,'')) LIKE ?)")
+        conditions.append("(LOWER(COALESCE(record_code,'')) LIKE ? OR LOWER(COALESCE(mother_tag,'')) LIKE ? OR LOWER(COALESCE(cause,'')) LIKE ? OR LOWER(COALESCE(farm_name,'')) LIKE ?)")
         wild = f"%{search}%"
-        params.extend([wild, wild, wild, wild, wild])
+        params.extend([wild, wild, wild, wild])
         
     where_sql = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     cursor.execute(f"SELECT * FROM stillbirth_records {where_sql} ORDER BY event_date ASC", params)
@@ -396,12 +390,12 @@ def export_stillborn_excel():
     )
     
     org_name = get_setting('farm_org_name', Config.DEFAULT_ORG_NAME)
-    ws.merge_cells('A1:N1')
+    ws.merge_cells('A1:L1')
     ws['A1'] = f"{org_name} — Журнал учёта мертворождений и абортов"
     ws['A1'].font = title_font
     ws['A1'].alignment = Alignment(horizontal='left', vertical='center')
     
-    ws.merge_cells('A2:N2')
+    ws.merge_cells('A2:L2')
     if start_date and end_date:
         period_str = f"Период: {start_date} — {end_date}"
     elif start_date:
@@ -417,10 +411,10 @@ def export_stillborn_excel():
         "№ п/п", "Код акта", "Дата события", "МТФ / Ферма", 
         "Идент. № матери (AITS)", "Группа матери", "Тип события", 
         "Пол плода", "Масса плода (кг)", "Срок (дней)", "Причина гибели плода", 
-        "Состояние матери", "Принял отёл", "Примечание"
+        "Примечание"
     ]
     
-    col_widths = [6, 18, 12, 16, 22, 22, 25, 14, 15, 12, 35, 25, 20, 25]
+    col_widths = [6, 18, 12, 16, 22, 22, 25, 14, 15, 12, 35, 30]
     for col_idx, width in enumerate(col_widths, start=1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = width
         
@@ -446,8 +440,6 @@ def export_stillborn_excel():
             r['fetus_weight'] or 0.0,
             r['gestation_days'] or 0,
             r['cause'],
-            r['mother_condition'] or 'Здорова',
-            r['attendant'] or '—',
             r['notes'] or ''
         ]
         for col_idx, val in enumerate(data, start=1):

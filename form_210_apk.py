@@ -6,6 +6,7 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime
 from config import Config
 from database import get_db_connection, get_setting
+from domain import format_lactation_or_age
 
 def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
     """
@@ -99,7 +100,7 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
         ('Идент. № AITS / Инв. №', 18),
         ('Подразделение (МТФ)', 16),
         ('Порода', 18),
-        ('Лактация / Возраст', 14),
+        ('Лактация / Возраст', 24),
         ('Живая масса (кг)', 13),
         ('Удой за посл. лактацию (кг)', 16),
         ('Причина выбраковки (диагноз)', 26),
@@ -119,8 +120,8 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
     ws.row_dimensions[row_num].height = 32
     
     total_weight = 0.0
-    align_center = Alignment(horizontal='center', vertical='center')
-    align_left = Alignment(horizontal='left', vertical='center')
+    align_center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    align_left = Alignment(horizontal='left', vertical='center', wrap_text=True)
     
     for idx, r in enumerate(rows, 1):
         row_num += 1
@@ -136,7 +137,7 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
             r['ear_tag'] or r['cow_id'],
             r['farm_name'],
             r['breed'] or Config.DEFAULT_BREED,
-            r['lactation'] or '-',
+            format_lactation_or_age(r['lactation'], r['age_group']),
             f"{w_val:.1f}" if w_val > 0 else "-",
             f"{r['milk_yield']:.0f}" if r['milk_yield'] else "-",
             r['reason'],

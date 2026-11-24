@@ -165,8 +165,6 @@ def add_cow():
             event_types=Config.STILLBIRTH_EVENT_TYPES,
             fetus_sexes=Config.FETUS_SEXES,
             stillborn_causes=Config.STILLBIRTH_CAUSES,
-            mother_conditions=Config.MOTHER_CONDITIONS,
-            default_attendant=Config.DEFAULT_ATTENDANT,
             stillborn_prefill=Config.STILLBORN_PREFILL_MAP,
             today=today,
             form_data=form_data or {}

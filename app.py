@@ -14,6 +14,7 @@ from config import Config
 from database import init_db, get_all_settings, run_write_transaction
 from auth import get_user_by_id
 from extensions import csrf
+from scheduled_backup import maybe_run_auto_backup
 
 from routes import (
     main_bp,
@@ -303,6 +304,9 @@ def sync_current_user_session():
         if session.get('must_change_password') and request.path not in ('/first_login_password', '/logout'):
             return redirect(url_for('auth.first_login_password'))
 
+        if not app.config.get('TESTING') or os.environ.get('ENABLE_AUTO_BACKUP_IN_TESTS'):
+            maybe_run_auto_backup()
+
 
 @app.after_request
 def add_security_headers(response):
@@ -415,6 +419,7 @@ def override_url_for():
             'backup_page': 'admin.backup',
             'backup': 'admin.backup',
             'download_db_backup': 'admin.download_backup',
+            'download_archived_backup': 'admin.download_archived_backup',
             'restore_db_backup': 'admin.restore_backup',
             'settings': 'admin.settings',
             'get_farms': 'api.get_farms',
