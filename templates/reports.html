@@ -32,10 +32,10 @@
                             </select>
                         </div>
                         {% else %}
-                        <input type="hidden" name="farm_filter" value="{{ session.farm_name }}">
+                        <input type="hidden" name="farm_filter" value="{{ session.farm_name or '' }}">
                         <div class="col-md-12">
                             <label class="form-label fw-semibold">Сельхозорганизация / Ферма</label>
-                            <input type="text" class="form-control bg-light" value="{{ session.farm_name }}" disabled>
+                            <input type="text" class="form-control bg-light" value="{{ session.farm_name or '' }}" disabled>
                         </div>
                         {% endif %}
                         

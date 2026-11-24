@@ -54,7 +54,8 @@ def view_cows():
         ''')
         farms = [r['farm_name'] for r in cursor.fetchall()]
     else:
-        farms = [farm_name]
+        clean_own = (farm_name or '').strip()
+        farms = [clean_own] if (clean_own and clean_own.lower() != 'all') else []
 
     cursor.execute(f'SELECT COUNT(*) as cnt FROM cows{where_sql}', params)
     total_count = cursor.fetchone()['cnt']
@@ -149,7 +150,10 @@ def add_cow():
         flash('Администраторы не могут добавлять коров', 'warning')
         return redirect(url_for('main.dashboard'))
 
-    farm_name = session.get('farm_name')
+    farm_name = (session.get('farm_name') or '').strip()
+    if not farm_name or farm_name.lower() == 'all':
+        flash('Учётная запись не привязана к ферме. Обратитесь к администратору для указания подразделения.', 'danger')
+        return redirect(url_for('cows.view_cows'))
     today_dt = date.today()
     today = today_dt.strftime('%Y-%m-%d')
 
@@ -229,9 +233,13 @@ def add_cow():
 def edit_cow(cow_id):
     """Редактирование записи о корове."""
     user_type = session.get('user_type')
-    farm_name = session.get('farm_name')
+    farm_name = (session.get('farm_name') or '').strip()
     today_dt = date.today()
     today = today_dt.strftime('%Y-%m-%d')
+
+    if user_type != 'admin' and (not farm_name or farm_name.lower() == 'all'):
+        flash('Запись не найдена или у вас нет прав на её редактирование', 'danger')
+        return redirect(url_for('cows.view_cows'))
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -342,7 +350,12 @@ def edit_cow(cow_id):
 def delete_cow(cow_id):
     """Удаление записи выбытия."""
     user_type = session.get('user_type')
-    farm_name = session.get('farm_name')
+    farm_name = (session.get('farm_name') or '').strip()
+    if user_type != 'admin' and (not farm_name or farm_name.lower() == 'all'):
+        if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({'error': 'Запись не найдена'}), 404
+        flash('Запись не найдена', 'danger')
+        return redirect(url_for('cows.view_cows'))
 
     def _tx_delete(_conn, cursor):
         if user_type == 'admin':
@@ -399,7 +412,9 @@ def bulk_delete_cows():
         return jsonify({'error': 'Не выбрано ни одной записи'}), 400
 
     user_type = session.get('user_type')
-    farm_name = session.get('farm_name')
+    farm_name = (session.get('farm_name') or '').strip()
+    if user_type != 'admin' and (not farm_name or farm_name.lower() == 'all'):
+        return jsonify({'success': True, 'deleted_count': 0})
 
     def _tx_bulk_delete(_conn, cursor):
         placeholders = ','.join('?' * len(cow_ids))
@@ -437,7 +452,13 @@ def add_multiple_cows():
         flash('Администраторы не могут добавлять коров', 'warning')
         return redirect(url_for('main.dashboard'))
 
-    farm_name = session.get('farm_name')
+    farm_name = (session.get('farm_name') or '').strip()
+    if not farm_name or farm_name.lower() == 'all':
+        err_msg = 'Учётная запись не привязана к ферме. Обратитесь к администратору.'
+        if request.is_json:
+            return jsonify({'success': False, 'error': err_msg}), 403
+        flash(err_msg, 'danger')
+        return redirect(url_for('cows.view_cows'))
 
     if request.method == 'POST':
         cows_data = None
@@ -597,7 +618,10 @@ def import_cows():
         flash('Только пользователи ферм могут импортировать данные своего хозяйства', 'warning')
         return redirect(url_for('main.dashboard'))
 
-    farm_name = session.get('farm_name')
+    farm_name = (session.get('farm_name') or '').strip()
+    if not farm_name or farm_name.lower() == 'all':
+        flash('Учётная запись не привязана к ферме. Обратитесь к администратору.', 'danger')
+        return redirect(url_for('cows.view_cows'))
     today_dt = date.today()
 
     if request.method == 'POST':

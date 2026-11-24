@@ -3,7 +3,7 @@ import io
 from datetime import datetime
 from flask import (
     Blueprint, render_template, request, session, 
-    send_file, Response
+    send_file, Response, flash, redirect, url_for
 )
 from config import Config
 from database import get_db_connection, get_setting
@@ -48,8 +48,11 @@ def generate_report():
     farm_filter = request.form.get('farm_filter')
     report_category = request.form.get('report_category')
     
-    if session.get('user_type') == 'farm':
-        farm_filter = session.get('farm_name')
+    if session.get('user_type') != 'admin':
+        farm_filter = (session.get('farm_name') or '').strip()
+        if not farm_filter or farm_filter.lower() == 'all':
+            flash('Учётная запись не привязана к ферме. Обратитесь к администратору для указания подразделения.', 'danger')
+            return redirect(url_for('reports.reports'))
         
     # 1. Акт на выбытие животных и птицы (Форма № 209-АПК / СП-54)
     if report_type in ['form_209_apk', 'sp54'] and report_format not in ['preview', 'csv']:

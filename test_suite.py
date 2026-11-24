@@ -1392,8 +1392,163 @@ class CattleSystemTestCase(unittest.TestCase):
         conn.commit()
         conn.close()
 
+    # 19. ОБЯЗАТЕЛЬНОСТЬ ФЕРМЫ ПРИ РЕДАКТИРОВАНИИ И FAIL-CLOSED ИЗОЛЯЦИЯ ДАННЫХ
+    def test_19_farm_user_requires_farm_and_fail_closed_isolation(self):
+        from charts import get_anomaly_alerts
+
+        ok_reg, _ = register_user('farm_req_u', 'FarmReq#123', 'farm', 'Ферма 1', must_change_password=False)
+        self.assertTrue(ok_reg)
+        ok_adm, _ = register_user('temp_adm_u', 'AdmReq#123', 'admin', must_change_password=False)
+        self.assertTrue(ok_adm)
+
+        conn = get_db_connection()
+        farm_uid = conn.execute("SELECT id FROM users WHERE username = 'farm_req_u'").fetchone()['id']
+        temp_adm_id = conn.execute("SELECT id FROM users WHERE username = 'temp_adm_u'").fetchone()['id']
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        conn.execute(
+            "INSERT INTO cows (cow_id, ear_tag, farm_name, category, reason, disposal_date) VALUES (?, ?, ?, ?, ?, ?)",
+            ('ISO-F1-1', 'BYISO1', 'Ферма 1', 'падёж', 'Мастит', today_str)
+        )
+        conn.execute(
+            "INSERT INTO cows (cow_id, ear_tag, farm_name, category, reason, disposal_date) VALUES (?, ?, ?, ?, ?, ?)",
+            ('ISO-F2-1', 'BYISO2', 'Ферма 2', 'выбраковка', 'Агалактия', today_str)
+        )
+        conn.execute(
+            "INSERT INTO stillbirth_records (record_code, farm_name, event_date, mother_tag, event_type, cause) VALUES (?, ?, ?, ?, ?, ?)",
+            ('SB-ISO-1', 'Ферма 1', today_str, 'BYM1', 'Мертворождённый телёнок (в срок)', 'Патология плода')
+        )
+        conn.commit()
+        conn.close()
+
+        # 1. На странице /edit_user для farm-пользователя поле #farm_name сразу имеет атрибут required,
+        #    а для admin-пользователя атрибут required отсутствует.
+        self.login('admin', 'AdminTest#123')
+        res_get_farm = self.client.get(f'/edit_user/{farm_uid}')
+        self.assertEqual(res_get_farm.status_code, 200)
+        html_farm = res_get_farm.data.decode('utf-8')
+        m_farm_input = re.search(r'<input[^>]*id=["\']farm_name["\'][^>]*>', html_farm)
+        self.assertIsNotNone(m_farm_input)
+        self.assertRegex(m_farm_input.group(0), r'\brequired\b')
+
+        res_get_adm = self.client.get(f'/edit_user/{temp_adm_id}')
+        self.assertEqual(res_get_adm.status_code, 200)
+        html_adm = res_get_adm.data.decode('utf-8')
+        m_adm_input = re.search(r'<input[^>]*id=["\']farm_name["\'][^>]*>', html_adm)
+        self.assertIsNotNone(m_adm_input)
+        self.assertNotRegex(m_adm_input.group(0), r'\brequired\b')
+
+        # 2. Сервер отклоняет сохранение farm-пользователя с пустым или некорректным названием фермы (HTTP 400)
+        csrf_edit = self._extract_csrf(res_get_farm.data)
+        for bad_farm in ('', '   ', 'all'):
+            res_bad = self.client.post(f'/edit_user/{farm_uid}', data={
+                'csrf_token': csrf_edit,
+                'username': 'farm_req_u',
+                'password': '',
+                'user_type': 'farm',
+                'farm_name': bad_farm,
+            }, follow_redirects=False)
+            self.assertEqual(res_bad.status_code, 400)
+            self.assertIn('обязательно указать название'.encode('utf-8'), res_bad.data)
+
+        conn = get_db_connection()
+        preserved_farm = conn.execute("SELECT farm_name FROM users WHERE id = ?", (farm_uid,)).fetchone()['farm_name']
+        conn.close()
+        self.assertEqual(preserved_farm, 'Ферма 1')
+
+        # 3. Перевод admin -> farm без названия фермы отклоняется и на уровне функции, и по HTTP
+        ok_upd, _ = update_user(temp_adm_id, 'temp_adm_u', user_type='farm', farm_name='')
+        self.assertFalse(ok_upd)
+        csrf_adm_edit = self._extract_csrf(res_get_adm.data)
+        res_adm_to_farm_bad = self.client.post(f'/edit_user/{temp_adm_id}', data={
+            'csrf_token': csrf_adm_edit,
+            'username': 'temp_adm_u',
+            'password': '',
+            'user_type': 'farm',
+            'farm_name': '',
+        }, follow_redirects=False)
+        self.assertEqual(res_adm_to_farm_bad.status_code, 400)
+
+        # Перевод farm -> admin очищает farm_name в NULL
+        ok_to_adm, _ = update_user(farm_uid, 'farm_req_u', user_type='admin')
+        self.assertTrue(ok_to_adm)
+        conn = get_db_connection()
+        self.assertIsNone(conn.execute("SELECT farm_name FROM users WHERE id = ?", (farm_uid,)).fetchone()['farm_name'])
+        conn.close()
+        self.logout()
+
+        # 4. Fail-closed защита: даже если в БД вручную создана учётная запись farm с NULL/''/'all' farm_name,
+        #    она не получает данные других хозяйств ни в дашборде/аналитике, ни в журналах, ни в отчётах.
+        dash_null = get_dashboard_full_data(user_type='farm', farm_name=None, period='all')
+        self.assertEqual(dash_null['kpi']['total_disposals'], 0)
+        self.assertEqual(dash_null['kpi']['all_time_total'], 0)
+        self.assertEqual(dash_null['reproduction']['stillborn_count'], 0)
+        self.assertEqual(dash_null['all_farms'], [])
+        self.assertEqual(get_anomaly_alerts(user_type='farm', farm_name=''), [])
+
+        conn = get_db_connection()
+        conn.execute("UPDATE users SET user_type = 'farm', farm_name = NULL WHERE id = ?", (farm_uid,))
+        conn.commit()
+        conn.close()
+
+        self.login('farm_req_u', 'FarmReq#123')
+
+        res_dash = self.client.get('/dashboard?period=all')
+        self.assertEqual(res_dash.status_code, 200)
+        dash_html = res_dash.data.decode('utf-8')
+        self.assertNotIn('BYISO1', dash_html)
+        self.assertNotIn('BYISO2', dash_html)
+
+        res_api_cows = self.client.get('/api/cows')
+        self.assertEqual(res_api_cows.status_code, 200)
+        self.assertEqual(res_api_cows.get_json()['total_filtered'], 0)
+        self.assertEqual(res_api_cows.get_json()['cows'], [])
+
+        res_cows = self.client.get('/cows')
+        self.assertEqual(res_cows.status_code, 200)
+        cows_html = res_cows.data.decode('utf-8')
+        self.assertNotIn('BYISO1', cows_html)
+        self.assertNotIn('BYISO2', cows_html)
+
+        res_sb = self.client.get('/stillborn')
+        self.assertEqual(res_sb.status_code, 200)
+        self.assertNotIn('SB-ISO-1', res_sb.data.decode('utf-8'))
+
+        import openpyxl
+        res_sb_xls = self.client.get('/export_stillborn_excel')
+        self.assertEqual(res_sb_xls.status_code, 200)
+        wb_sb = openpyxl.load_workbook(io.BytesIO(res_sb_xls.data))
+        self.assertEqual(wb_sb.active.max_row, 4)  # только шапка, ни одной строки данных
+
+        csrf_rep = self.get_csrf_token('/reports')
+        for rtype, rfmt in [('simple', 'csv'), ('form_209_apk', 'excel'), ('structured', 'excel'), ('matrix', 'excel'), ('simple', 'preview')]:
+            res_rep = self.client.post('/generate_report', data={
+                'csrf_token': csrf_rep,
+                'report_type': rtype,
+                'format': rfmt,
+                'start_date': today_str,
+                'end_date': today_str,
+                'farm_filter': 'all',
+            }, follow_redirects=False)
+            self.assertEqual(res_rep.status_code, 302)
+            self.assertIn('/reports', res_rep.headers.get('Location', ''))
+
+        res_add = self.client.get('/add_cow', follow_redirects=False)
+        self.assertEqual(res_add.status_code, 302)
+        res_add_sb = self.client.get('/add_stillborn', follow_redirects=False)
+        self.assertEqual(res_add_sb.status_code, 302)
+
+        self.logout()
+
+        conn = get_db_connection()
+        conn.execute("DELETE FROM cows WHERE cow_id IN ('ISO-F1-1', 'ISO-F2-1')")
+        conn.execute("DELETE FROM stillbirth_records WHERE record_code = 'SB-ISO-1'")
+        conn.execute("DELETE FROM users WHERE id IN (?, ?)", (farm_uid, temp_adm_id))
+        conn.commit()
+        conn.close()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
 
 

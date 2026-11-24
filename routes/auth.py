@@ -311,6 +311,13 @@ def edit_user(user_id):
             return redirect(url_for('auth.user_management'))
         else:
             flash(message, 'danger')
+            form_user = {
+                'id': user.id,
+                'username': username or user.username,
+                'user_type': user_type or user.user_type,
+                'farm_name': request.form.get('farm_name', '').strip() if user_type == 'farm' else user.farm_name,
+            }
+            return render_template('edit_user.html', user=form_user), 400
 
     return render_template('edit_user.html', user=user)
 

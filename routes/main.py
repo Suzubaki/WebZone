@@ -19,15 +19,17 @@ def index():
 def dashboard():
     """Аналитический дашборд мониторинга выбытия КРС"""
     user_type = session.get('user_type')
-    farm_name = session.get('farm_name')
-    
+    raw_farm = (session.get('farm_name') or '').strip()
+    farm_name = raw_farm if raw_farm else None
+
     period = request.args.get('period', 'auto')
     custom_start = request.args.get('custom_start')
     custom_end = request.args.get('custom_end')
-    
-    selected_farm = farm_name
+
     if user_type == 'admin':
         selected_farm = (request.args.get('farm') or 'all').strip() or 'all'
+    else:
+        selected_farm = raw_farm
         
     dashboard_data = get_dashboard_full_data(
         user_type=user_type,

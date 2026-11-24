@@ -130,8 +130,12 @@ def build_cows_where_clause(args, user_type, session_farm):
     params = []
 
     if user_type != 'admin':
-        conditions.append("farm_name = ?")
-        params.append(session_farm)
+        clean_session_farm = (session_farm or '').strip()
+        if not clean_session_farm or clean_session_farm.lower() == 'all':
+            conditions.append("1 = 0")
+        else:
+            conditions.append("farm_name = ?")
+            params.append(clean_session_farm)
     elif farm_filter and farm_filter != 'all':
         conditions.append("farm_name = ?")
         params.append(farm_filter)

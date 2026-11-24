@@ -13,6 +13,18 @@ from domain import (
     normalize_date,
 )
 
+def _farm_filter_sql(user_type, farm_name):
+    """Fail-closed фильтр по ферме: пользователь фермы без привязки к подразделению получает 0 строк."""
+    clean_farm = (farm_name or '').strip()
+    if user_type != 'admin':
+        if not clean_farm or clean_farm.lower() == 'all':
+            return "1 = 0", []
+        return "farm_name = ?", [clean_farm]
+    if clean_farm and clean_farm.lower() != 'all':
+        return "farm_name = ?", [clean_farm]
+    return None, []
+
+
 def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, custom_start=None, custom_end=None):
     """
     Комплексный расчет всех статистических срезов для аналитического дашборда
@@ -20,6 +32,7 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
     conn = get_db_connection()
     cursor = conn.cursor()
     now = datetime.now()
+    f_cond, f_params = _farm_filter_sql(user_type, farm_name)
 
     # 0. Автоопределение периода (EXISTS останавливается на первой найденной строке)
     if not period or period == 'auto':
@@ -27,12 +40,9 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
         cur_m_end = now.strftime('%Y-%m-%d')
         p_check_where = ["disposal_date BETWEEN ? AND ?", "COALESCE(is_stillborn, 0) = 0"]
         p_check_params = [cur_m_start, cur_m_end]
-        if user_type == 'farm' and farm_name:
-            p_check_where.append("farm_name = ?")
-            p_check_params.append(farm_name)
-        elif user_type == 'admin' and farm_name and farm_name != 'all':
-            p_check_where.append("farm_name = ?")
-            p_check_params.append(farm_name)
+        if f_cond:
+            p_check_where.append(f_cond)
+            p_check_params.extend(f_params)
 
         cursor.execute(f"SELECT EXISTS(SELECT 1 FROM cows WHERE {' AND '.join(p_check_where)} LIMIT 1)", p_check_params)
         if cursor.fetchone()[0]:
@@ -43,12 +53,9 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
             last_m_start = last_m_end_dt.replace(day=1).strftime('%Y-%m-%d')
             p_last_where = ["disposal_date BETWEEN ? AND ?", "COALESCE(is_stillborn, 0) = 0"]
             p_last_params = [last_m_start, last_m_end]
-            if user_type == 'farm' and farm_name:
-                p_last_where.append("farm_name = ?")
-                p_last_params.append(farm_name)
-            elif user_type == 'admin' and farm_name and farm_name != 'all':
-                p_last_where.append("farm_name = ?")
-                p_last_params.append(farm_name)
+            if f_cond:
+                p_last_where.append(f_cond)
+                p_last_params.extend(f_params)
             cursor.execute(f"SELECT EXISTS(SELECT 1 FROM cows WHERE {' AND '.join(p_last_where)} LIMIT 1)", p_last_params)
             period = 'last_month' if cursor.fetchone()[0] else 'all'
 
@@ -101,14 +108,11 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
     # Формируем WHERE-фильтр
     where_parts = ["disposal_date BETWEEN ? AND ?"]
     params = [start_date, end_date]
-    
-    if user_type == 'farm' and farm_name:
-        where_parts.append("farm_name = ?")
-        params.append(farm_name)
-    elif user_type == 'admin' and farm_name and farm_name != 'all':
-        where_parts.append("farm_name = ?")
-        params.append(farm_name)
-        
+
+    if f_cond:
+        where_parts.append(f_cond)
+        params.extend(f_params)
+
     where_clause = "WHERE " + " AND ".join(where_parts)
     
     # 2. Выборка строк за выбранный период (с авто-миграцией при устаревшей схеме БД)
@@ -777,12 +781,9 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
     twelve_months_ago = (now - timedelta(days=365)).strftime('%Y-%m-%d')
     m_where_parts = ["disposal_date >= ?", "COALESCE(is_stillborn, 0) = 0"]
     m_params = [twelve_months_ago]
-    if user_type == 'farm' and farm_name:
-        m_where_parts.append("farm_name = ?")
-        m_params.append(farm_name)
-    elif user_type == 'admin' and farm_name and farm_name != 'all':
-        m_where_parts.append("farm_name = ?")
-        m_params.append(farm_name)
+    if f_cond:
+        m_where_parts.append(f_cond)
+        m_params.extend(f_params)
 
     cursor.execute(f'''
         SELECT strftime('%Y-%m', disposal_date) as month, category, COUNT(*) as count
@@ -837,12 +838,9 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
 
     all_time_clauses = ["COALESCE(is_stillborn, 0) = 0"]
     all_time_params = []
-    if user_type == 'farm' and farm_name:
-        all_time_clauses.append("farm_name = ?")
-        all_time_params = [farm_name]
-    elif user_type == 'admin' and farm_name and farm_name != 'all':
-        all_time_clauses.append("farm_name = ?")
-        all_time_params = [farm_name]
+    if f_cond:
+        all_time_clauses.append(f_cond)
+        all_time_params.extend(f_params)
     all_time_where = "WHERE " + " AND ".join(all_time_clauses)
 
     cursor.execute(f'SELECT COUNT(*) as total FROM cows {all_time_where}', all_time_params)
@@ -857,12 +855,9 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
 
         p_where_parts = ["disposal_date BETWEEN ? AND ?", "COALESCE(is_stillborn, 0) = 0"]
         p_params = [prev_start_date, prev_end_date]
-        if user_type == 'farm' and farm_name:
-            p_where_parts.append("farm_name = ?")
-            p_params.append(farm_name)
-        elif user_type == 'admin' and farm_name and farm_name != 'all':
-            p_where_parts.append("farm_name = ?")
-            p_params.append(farm_name)
+        if f_cond:
+            p_where_parts.append(f_cond)
+            p_params.extend(f_params)
 
         cursor.execute(f"SELECT COUNT(*) as count FROM cows WHERE {' AND '.join(p_where_parts)}", p_params)
         prev_period_count = cursor.fetchone()['count']
@@ -874,16 +869,20 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
         growth_pct = 0.0
         prev_period_count = 0
 
-    cursor.execute('''
-        SELECT DISTINCT farm_name FROM (
-            SELECT farm_name FROM users WHERE farm_name IS NOT NULL AND farm_name != ''
-            UNION
-            SELECT farm_name FROM cows WHERE farm_name IS NOT NULL AND farm_name != ''
-            UNION
-            SELECT farm_name FROM stillbirth_records WHERE farm_name IS NOT NULL AND farm_name != ''
-        ) ORDER BY farm_name
-    ''')
-    all_farms_list = [r['farm_name'] for r in cursor.fetchall()]
+    if user_type == 'admin':
+        cursor.execute('''
+            SELECT DISTINCT farm_name FROM (
+                SELECT farm_name FROM users WHERE farm_name IS NOT NULL AND farm_name != ''
+                UNION
+                SELECT farm_name FROM cows WHERE farm_name IS NOT NULL AND farm_name != ''
+                UNION
+                SELECT farm_name FROM stillbirth_records WHERE farm_name IS NOT NULL AND farm_name != ''
+            ) ORDER BY farm_name
+        ''')
+        all_farms_list = [r['farm_name'] for r in cursor.fetchall()]
+    else:
+        clean_own_farm = (farm_name or '').strip()
+        all_farms_list = [clean_own_farm] if (clean_own_farm and clean_own_farm.lower() != 'all') else []
 
     non_sb_cows = [c for c in period_cows if not (c['is_stillborn'] or c['category'] == 'мертворождение')]
     if len(non_sb_cows) > 0:
@@ -903,12 +902,9 @@ def get_dashboard_full_data(user_type='admin', farm_name=None, period=None, cust
     # Извлечение мертворождений из stillbirth_records
     sb_where = ["event_date BETWEEN ? AND ?"]
     sb_params = [start_date, end_date]
-    if user_type == 'farm' and farm_name:
-        sb_where.append("farm_name = ?")
-        sb_params.append(farm_name)
-    elif user_type == 'admin' and farm_name and farm_name != 'all':
-        sb_where.append("farm_name = ?")
-        sb_params.append(farm_name)
+    if f_cond:
+        sb_where.append(f_cond)
+        sb_params.extend(f_params)
 
     cursor.execute(f"""
         SELECT farm_name, event_type, fetus_sex, mother_group, cause, fetus_weight, gestation_days
@@ -1222,12 +1218,10 @@ def get_anomaly_alerts(user_type='admin', farm_name=None):
     
     where_farm = ""
     farm_params = []
-    if user_type == 'farm' and farm_name:
-        where_farm = "AND farm_name = ?"
-        farm_params.append(farm_name)
-    elif user_type == 'admin' and farm_name and farm_name != 'all':
-        where_farm = "AND farm_name = ?"
-        farm_params.append(farm_name)
+    f_cond, f_params = _farm_filter_sql(user_type, farm_name)
+    if f_cond:
+        where_farm = f"AND {f_cond}"
+        farm_params = list(f_params)
     
     # 1. Сравнение падежа за последние N дней
     cursor.execute(f'''

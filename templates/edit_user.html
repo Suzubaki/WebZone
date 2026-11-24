@@ -32,7 +32,7 @@
                     
                     <div class="mb-3" id="farm_name_field" {% if user.user_type != 'farm' %}style="display: none;"{% endif %}>
                         <label for="farm_name" class="form-label">Название фермы</label>
-                        <input type="text" class="form-control" id="farm_name" name="farm_name" value="{{ user.farm_name or '' }}">
+                        <input type="text" class="form-control" id="farm_name" name="farm_name" value="{{ user.farm_name or '' }}" {% if user.user_type == 'farm' %}required{% endif %}>
                     </div>
                     
                     <div class="d-grid gap-2 d-md-flex justify-content-md-end">
@@ -63,5 +63,6 @@ function toggleFarmField() {
         farmInput.required = false;
     }
 }
+document.addEventListener('DOMContentLoaded', toggleFarmField);
 </script>
 {% endblock %}

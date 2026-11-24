@@ -75,7 +75,8 @@ def register_user(username, password, user_type, farm_name=None, must_change_pas
         return False, pwd_msg
     if user_type not in ('admin', 'farm'):
         return False, 'Недопустимый тип пользователя'
-    if user_type == 'farm' and not (farm_name or '').strip():
+    clean_farm = (farm_name or '').strip()
+    if user_type == 'farm' and (not clean_farm or clean_farm.lower() == 'all'):
         return False, 'Для учётной записи фермы обязательно указать название подразделения'
 
     def _tx_register(_conn, cursor):
@@ -141,15 +142,30 @@ def update_user(user_id, username, password=None, user_type=None, farm_name=None
         if not user:
             return False, 'Пользователь не найден'
 
-        old_farm_name = user['farm_name']
+        clean_username = (username or '').strip()
+        if not clean_username:
+            return False, 'Укажите имя пользователя'
 
-        if username != user['username']:
-            cursor.execute('SELECT id FROM users WHERE username = ? AND id != ?', (username, user_id))
+        old_farm_name = user['farm_name']
+        effective_user_type = user_type or user['user_type']
+        if effective_user_type not in ('admin', 'farm'):
+            return False, 'Недопустимый тип пользователя'
+
+        if effective_user_type == 'farm':
+            raw_farm = farm_name if farm_name is not None else (old_farm_name or '')
+            clean_farm = raw_farm.strip()
+            if not clean_farm or clean_farm.lower() == 'all':
+                return False, 'Для учётной записи фермы обязательно указать название подразделения'
+        else:
+            clean_farm = None
+
+        if clean_username != user['username']:
+            cursor.execute('SELECT id FROM users WHERE username = ? AND id != ?', (clean_username, user_id))
             if cursor.fetchone():
                 return False, 'Пользователь с таким именем уже существует'
 
         update_fields = ['username = ?']
-        params = [username]
+        params = [clean_username]
         bump_session_version = False
 
         if password:
@@ -171,12 +187,12 @@ def update_user(user_id, username, password=None, user_type=None, farm_name=None
             update_fields.append('user_type = ?')
             params.append(user_type)
 
-        if farm_name is not None:
-            clean_farm = farm_name.strip() or None
+        if effective_user_type == 'farm':
             update_fields.append('farm_name = ?')
             params.append(clean_farm)
-        else:
-            clean_farm = None
+        elif user_type == 'admin':
+            update_fields.append('farm_name = ?')
+            params.append(None)
 
         if bump_session_version:
             update_fields.append('session_version = COALESCE(session_version, 1) + 1')

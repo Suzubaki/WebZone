@@ -39,8 +39,12 @@ def stillborn_list():
     params = []
     
     if user_type != 'admin':
-        conditions.append("farm_name = ?")
-        params.append(session_farm)
+        clean_session_farm = (session_farm or '').strip()
+        if not clean_session_farm or clean_session_farm.lower() == 'all':
+            conditions.append("1 = 0")
+        else:
+            conditions.append("farm_name = ?")
+            params.append(clean_session_farm)
     elif farm_filter and farm_filter != 'all':
         conditions.append("farm_name = ?")
         params.append(farm_filter)
@@ -80,7 +84,8 @@ def stillborn_list():
         ''')
         farms = [r['farm_name'] for r in cursor.fetchall()]
     else:
-        farms = [session_farm]
+        clean_own = (session_farm or '').strip()
+        farms = [clean_own] if (clean_own and clean_own.lower() != 'all') else []
         
     # Сводные показатели (1 SQL-запрос вместо 3)
     cursor.execute(f"""
@@ -134,7 +139,10 @@ def add_stillborn():
         flash('Администраторы не регистрируют первичные акты. Используйте учётную запись ветврача фермы.', 'warning')
         return redirect(url_for('stillborn.stillborn_list'))
         
-    farm_name = session.get('farm_name')
+    farm_name = (session.get('farm_name') or '').strip()
+    if not farm_name or farm_name.lower() == 'all':
+        flash('Учётная запись не привязана к ферме. Обратитесь к администратору для указания подразделения.', 'danger')
+        return redirect(url_for('stillborn.stillborn_list'))
     today_dt = date.today()
     today = today_dt.strftime('%Y-%m-%d')
 
@@ -193,12 +201,16 @@ def add_stillborn():
 def edit_stillborn(record_id):
     """Редактирование записи о мертворождении/аборте"""
     user_type = session.get('user_type')
-    farm_name = session.get('farm_name')
+    farm_name = (session.get('farm_name') or '').strip()
     today = datetime.now().strftime('%Y-%m-%d')
-    
+
+    if user_type != 'admin' and (not farm_name or farm_name.lower() == 'all'):
+        flash('Учётная запись не привязана к ферме. Обратитесь к администратору.', 'danger')
+        return redirect(url_for('stillborn.stillborn_list'))
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     if user_type == 'admin':
         cursor.execute('SELECT * FROM stillbirth_records WHERE id = ?', (record_id,))
     else:
@@ -289,8 +301,11 @@ def edit_stillborn(record_id):
 def delete_stillborn(record_id):
     """Удаление акта мертворождения"""
     user_type = session.get('user_type')
-    farm_name = session.get('farm_name')
-    
+    farm_name = (session.get('farm_name') or '').strip()
+    if user_type != 'admin' and (not farm_name or farm_name.lower() == 'all'):
+        flash('Запись не найдена или нет прав на удаление', 'danger')
+        return redirect(url_for('stillborn.stillborn_list'))
+
     def _tx_delete_sb(_conn, cursor):
         if user_type == 'admin':
             cursor.execute('SELECT * FROM stillbirth_records WHERE id = ?', (record_id,))
@@ -342,8 +357,12 @@ def export_stillborn_excel():
     params = []
     
     if user_type != 'admin':
-        conditions.append("farm_name = ?")
-        params.append(session_farm)
+        clean_session_farm = (session_farm or '').strip()
+        if not clean_session_farm or clean_session_farm.lower() == 'all':
+            conditions.append("1 = 0")
+        else:
+            conditions.append("farm_name = ?")
+            params.append(clean_session_farm)
     elif farm_filter and farm_filter != 'all':
         conditions.append("farm_name = ?")
         params.append(farm_filter)
@@ -404,7 +423,8 @@ def export_stillborn_excel():
         period_str = f"Период: по {end_date}"
     else:
         period_str = "За весь период"
-    ws['A2'] = f"{period_str} | Подразделение: {farm_filter or session_farm or 'Все фермы'}"
+    sub_farm = farm_filter if user_type == 'admin' else ((session_farm or '').strip() or 'Не привязана')
+    ws['A2'] = f"{period_str} | Подразделение: {sub_farm or 'Все фермы'}"
     ws['A2'].font = Font(name='Arial', size=10, italic=True)
     
     headers = [
