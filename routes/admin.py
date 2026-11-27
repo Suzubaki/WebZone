@@ -3,7 +3,7 @@ import logging
 import os
 from flask import (
     Blueprint, render_template, request, redirect, 
-    url_for, flash, session, jsonify, Response, abort, current_app
+    url_for, flash, session, jsonify, Response, abort, current_app, send_file
 )
 from config import Config
 from database import get_db_connection, log_audit_event, get_all_settings, invalidate_settings_cache, run_write_transaction
@@ -19,24 +19,32 @@ admin_bp = Blueprint('admin', __name__)
 def manage_reasons():
     """Управление справочником причин выбытия скота (для администратора)"""
     if request.method == 'POST':
-        category = request.form.get('category')
-        name = request.form.get('name', '').strip()
+        category = (request.form.get('category') or '').strip()
+        name = (request.form.get('name') or '').strip()
 
-        if category and name:
-            def _tx_add_reason(_conn, cursor):
-                cursor.execute('INSERT OR IGNORE INTO disposal_reasons (category, name, is_active) VALUES (?, ?, 1)', (category, name))
-                log_audit_event(
-                    username=session.get('username'),
-                    farm_name='Admin',
-                    action='CREATE_REASON',
-                    entity_type='REASON',
-                    details=f"Добавлена новая причина '{name}' в категорию '{category}'",
-                    user_id=session.get('user_id'),
-                    ip_address=request.remote_addr,
-                    cursor=cursor
-                )
-            run_write_transaction(_tx_add_reason)
-            flash(f"Причина '{name}' успешно добавлена в справочник", 'success')
+        if category not in Config.DISPOSAL_CATEGORIES or not name:
+            flash('Укажите допустимую категорию выбытия и непустое название причины.', 'danger')
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM disposal_reasons ORDER BY category, name')
+            reasons = [dict(r) for r in cursor.fetchall()]
+            conn.close()
+            return render_template('manage_reasons.html', reasons=reasons), 400
+
+        def _tx_add_reason(_conn, cursor):
+            cursor.execute('INSERT OR IGNORE INTO disposal_reasons (category, name, is_active) VALUES (?, ?, 1)', (category, name))
+            log_audit_event(
+                username=session.get('username'),
+                farm_name='Admin',
+                action='CREATE_REASON',
+                entity_type='REASON',
+                details=f"Добавлена новая причина '{name}' в категорию '{category}'",
+                user_id=session.get('user_id'),
+                ip_address=request.remote_addr,
+                cursor=cursor
+            )
+        run_write_transaction(_tx_add_reason)
+        flash(f"Причина '{name}' успешно добавлена в справочник", 'success')
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -137,18 +145,14 @@ def download_archived_backup(filename):
     backup_path = os.path.join(get_backup_dir(), filename)
     if not os.path.isfile(backup_path):
         abort(404)
-    with open(backup_path, 'rb') as f:
-        data = f.read()
-    return Response(
-        data,
-        status=200,
+    resp = send_file(
+        backup_path,
+        download_name=filename,
+        as_attachment=True,
         mimetype='application/octet-stream',
-        headers={
-            'Content-Disposition': f'attachment; filename="{filename}"',
-            'Content-Length': str(len(data)),
-            'Cache-Control': 'no-store',
-        }
     )
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 @admin_bp.route('/backup/download')
 @admin_required

@@ -76,7 +76,7 @@
                             <label for="lactation_days" class="form-label fw-semibold text-primary">
                                 <i class="bi bi-clock-history"></i> Дни лактации (DIM)
                             </label>
-                            <input type="number" class="form-control" id="lactation_days" name="lactation_days" min="0" max="999" value="{{ cow.lactation_days if cow.lactation_days is not none else '' }}" placeholder="Дней после отёла">
+                            <input type="number" class="form-control" id="lactation_days" name="lactation_days" min="0" max="1500" value="{{ cow.lactation_days if cow.lactation_days is not none else '' }}" placeholder="Дней после отёла">
                             <div class="form-text" id="lactationPhaseBadge">
                                 {% if cow.lactation_phase %}
                                     <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">{{ cow.lactation_phase }}</span>
@@ -114,7 +114,7 @@
                                 <div class="col-md-4">
                                     <div class="input-group input-group-sm">
                                         <span class="input-group-text">Срок стельности:</span>
-                                        <input type="number" class="form-control" id="gestation_days" name="gestation_days" min="0" max="300" value="{{ cow.gestation_days or '' }}" placeholder="дней">
+                                        <input type="number" class="form-control" id="gestation_days" name="gestation_days" min="0" max="320" value="{{ cow.gestation_days or '' }}" placeholder="дней">
                                         <span class="input-group-text">дн.</span>
                                     </div>
                                 </div>

@@ -63,7 +63,8 @@ app.config.from_object(Config)
 app.session_interface = DynamicCookieSessionInterface()
 
 # Корректная обработка X-Forwarded-* заголовков за reverse proxy (PythonAnywhere / Nginx)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+_proxy_x_for = max(0, int(os.environ.get('PROXY_FIX_X_FOR', '1')))
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_proxy_x_for, x_proto=1, x_host=1, x_prefix=1)
 
 # Регистрируем лимит размера для восстановления БД ДО csrf.init_app(app),
 # чтобы CSRF-парсер формы не отклонял бэкапы > 16 МБ (лимит 50 МБ только для /backup/restore).
@@ -266,7 +267,11 @@ def anti_ddos_guard():
         return None
 
     client_ip = get_client_ip()
-    if client_ip in ('127.0.0.1', '::1') and not os.environ.get('ENABLE_LOCAL_RATELIMIT'):
+    if (
+        client_ip in ('127.0.0.1', '::1')
+        and not request.headers.get('X-Forwarded-For')
+        and not os.environ.get('ENABLE_LOCAL_RATELIMIT')
+    ):
         return None
 
     ensure_app_initialized()
@@ -315,6 +320,17 @@ def sync_current_user_session():
         session['_user_sync_ts'] = time.time()
 
         if session.get('must_change_password') and request.path not in ('/first_login_password', '/logout'):
+            is_api_or_ajax = (
+                request.is_json
+                or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+                or request.path.startswith('/api/')
+            )
+            if is_api_or_ajax:
+                return jsonify({
+                    'success': False,
+                    'error': 'password_change_required',
+                    'message': 'Требуется смена первичного пароля.'
+                }), 403
             return redirect(url_for('auth.first_login_password'))
 
         if not app.config.get('TESTING') or os.environ.get('ENABLE_AUTO_BACKUP_IN_TESTS'):

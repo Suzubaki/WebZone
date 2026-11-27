@@ -256,14 +256,12 @@
                                     <a href="/edit_cow/{{ cow.id }}" class="btn btn-outline-primary btn-sm" title="Редактировать">
                                         <i class="bi bi-pencil"></i>
                                     </a>
-                                    {% if user_type != 'admin' %}
                                     <button type="button" class="btn btn-outline-danger btn-sm delete-cow-btn" 
                                             data-cow-id="{{ cow.id }}" 
                                             data-cow-number="{{ cow.cow_id }}"
                                             title="Удалить">
                                         <i class="bi bi-trash"></i>
                                     </button>
-                                    {% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -464,9 +462,29 @@ $(document).ready(function() {
                 return;
             }
 
+            function escapeHtml(val) {
+                if (val === null || val === undefined) return '';
+                return String(val)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
             var rowsHtml = [];
             for (var idx = 0; idx < res.cows.length; idx++) {
                 var cow = res.cows[idx];
+                var safeId = parseInt(cow.id, 10) || 0;
+                var safeCowId = escapeHtml(cow.cow_id || '');
+                var safeEarTag = escapeHtml(cow.ear_tag || '-');
+                var safeFarm = escapeHtml(cow.farm_name || '');
+                var safeAgeGroup = escapeHtml(cow.age_group || 'Основное');
+                var safePhase = escapeHtml(cow.lactation_phase || '');
+                var safeReason = escapeHtml(cow.reason || '');
+                var safeDate = escapeHtml(cow.disposal_date || '');
+                var safeWeight = (cow.weight !== null && cow.weight !== undefined && cow.weight !== '') ? escapeHtml(cow.weight) : '-';
+
                 var catBadge = '<span class="badge bg-warning text-dark">Санитарный брак</span>';
                 if (cow.category === 'падёж') {
                     catBadge = '<span class="badge bg-danger">Падёж</span>';
@@ -480,39 +498,39 @@ $(document).ready(function() {
                 if (isYoung) {
                     lactText = '<span class="badge bg-light text-muted border">Молодняк</span>';
                 } else {
-                    var lNum = cow.lactation ? ('Лакт. ' + cow.lactation) : 'Взрослое';
-                    var dVal = (cow.lactation_days !== undefined && cow.lactation_days !== null) ? (' <span class="text-primary">• ' + cow.lactation_days + ' дн.</span>') : '';
+                    var safeLactNum = (cow.lactation !== null && cow.lactation !== undefined && cow.lactation !== '') ? escapeHtml(cow.lactation) : '';
+                    var lNum = safeLactNum ? ('Лакт. ' + safeLactNum) : 'Взрослое';
+                    var dVal = (cow.lactation_days !== undefined && cow.lactation_days !== null) ? (' <span class="text-primary">• ' + escapeHtml(cow.lactation_days) + ' дн.</span>') : '';
                     lactText = '<div class="small fw-semibold">' + lNum + dVal + '</div>';
-                    if (cow.lactation_phase) {
-                        lactText += '<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">' + cow.lactation_phase + '</span>';
+                    if (safePhase) {
+                        lactText += '<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">' + safePhase + '</span>';
                     }
                 }
 
                 var reproBadge = '';
                 if (cow.is_pregnant === 1) {
-                    var gTxt = cow.gestation_days ? (' (' + Math.round(cow.gestation_days / 30 * 10) / 10 + ' мес.)') : '';
-                    reproBadge = ' <span class="badge bg-warning-subtle text-dark border border-warning-subtle ms-1" title="Срок стельности: ' + (cow.gestation_days || 0) + ' дн.">Стельная' + gTxt + '</span>';
+                    var gestDays = parseInt(cow.gestation_days, 10) || 0;
+                    var gTxt = gestDays ? (' (' + Math.round(gestDays / 30 * 10) / 10 + ' мес.)') : '';
+                    reproBadge = ' <span class="badge bg-warning-subtle text-dark border border-warning-subtle ms-1" title="Срок стельности: ' + gestDays + ' дн.">Стельная' + gTxt + '</span>';
                 }
                 if (cow.is_stillborn === 1) {
                     reproBadge += ' <span class="badge bg-danger-subtle text-danger border border-danger-subtle ms-1"><i class="bi bi-x-circle-fill me-1"></i>Мертворожд.</span>';
                 }
 
-                rowsHtml.push('<tr data-cow-id="' + cow.id + '">' +
-                    '<td class="text-center"><input type="checkbox" class="form-check-input cow-checkbox" value="' + cow.id + '"></td>' +
-                    '<td><span class="badge bg-secondary font-monospace">' + (cow.cow_id || '') + '</span></td>' +
-                    '<td><strong class="text-primary">' + (cow.ear_tag || '-') + '</strong></td>' +
-                    '<td>' + (cow.farm_name || '') + '</td>' +
-                    '<td><small class="badge bg-light text-dark border">' + (cow.age_group || 'Основное') + '</small></td>' +
+                rowsHtml.push('<tr data-cow-id="' + safeId + '">' +
+                    '<td class="text-center"><input type="checkbox" class="form-check-input cow-checkbox" value="' + safeId + '"></td>' +
+                    '<td><span class="badge bg-secondary font-monospace">' + safeCowId + '</span></td>' +
+                    '<td><strong class="text-primary">' + safeEarTag + '</strong></td>' +
+                    '<td>' + safeFarm + '</td>' +
+                    '<td><small class="badge bg-light text-dark border">' + safeAgeGroup + '</small></td>' +
                     '<td>' + lactText + '</td>' +
                     '<td>' + catBadge + '</td>' +
-                    '<td>' + (cow.reason || '') + reproBadge + '</td>' +
-                    '<td>' + (cow.weight || '-') + '</td>' +
-                    '<td><span class="text-nowrap">' + (cow.disposal_date || '') + '</span></td>' +
+                    '<td>' + safeReason + reproBadge + '</td>' +
+                    '<td>' + safeWeight + '</td>' +
+                    '<td><span class="text-nowrap">' + safeDate + '</span></td>' +
                     '<td class="text-end text-nowrap">' +
-                        '<a href="/edit_cow/' + cow.id + '" class="btn btn-outline-primary btn-sm me-1" title="Редактировать"><i class="bi bi-pencil"></i></a>' +
-                        {% if user_type != 'admin' %}
-                        '<button type="button" class="btn btn-outline-danger btn-sm delete-cow-btn" data-cow-id="' + cow.id + '" data-cow-number="' + cow.cow_id + '" title="Удалить"><i class="bi bi-trash"></i></button>' +
-                        {% endif %}
+                        '<a href="/edit_cow/' + safeId + '" class="btn btn-outline-primary btn-sm me-1" title="Редактировать"><i class="bi bi-pencil"></i></a>' +
+                        '<button type="button" class="btn btn-outline-danger btn-sm delete-cow-btn" data-cow-id="' + safeId + '" data-cow-number="' + safeCowId + '" title="Удалить"><i class="bi bi-trash"></i></button>' +
                     '</td>' +
                 '</tr>');
             }
@@ -675,7 +693,10 @@ $(document).ready(function() {
     var paramReason = urlParams.get('reason');
     if (paramReason) {
         var $rf2 = $('#reason_filter');
-        if ($rf2.find('option[value="' + paramReason + '"]').length === 0) {
+        var hasOption = $rf2.find('option').filter(function() {
+            return this.value === paramReason;
+        }).length > 0;
+        if (!hasOption) {
             $rf2.append($('<option>', { value: paramReason, text: paramReason }));
         }
         $rf2.val(paramReason).prop('disabled', false);
@@ -720,7 +741,10 @@ $(document).ready(function() {
     var paramPhase = urlParams.get('lactation_phase');
     if (paramPhase) {
         var $lpf = $('#lactation_phase_filter');
-        if ($lpf.find('option[value="' + paramPhase + '"]').length === 0) {
+        var hasPhaseOption = $lpf.find('option').filter(function() {
+            return this.value === paramPhase;
+        }).length > 0;
+        if (!hasPhaseOption) {
             $lpf.append($('<option>', { value: paramPhase, text: paramPhase }));
         }
         $lpf.val(paramPhase);

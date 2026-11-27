@@ -254,8 +254,16 @@ def register():
             return redirect(url_for('auth.user_management'))
         else:
             flash(message, 'danger')
+            return render_template(
+                'register.html',
+                form_data={
+                    'username': username,
+                    'user_type': user_type or '',
+                    'farm_name': request.form.get('farm_name', '').strip(),
+                }
+            ), 400
 
-    return render_template('register.html')
+    return render_template('register.html', form_data={})
 
 
 @auth_bp.route('/user_management')

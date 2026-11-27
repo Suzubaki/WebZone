@@ -20,9 +20,13 @@ def generate_form_210_apk_excel(start_date, end_date, farm_name=None):
     where_clause = "WHERE disposal_date BETWEEN ? AND ? AND category IN ('выбраковка', 'санитарный') AND COALESCE(is_stillborn, 0) = 0"
     params = [start_date, end_date]
     
-    if farm_name and farm_name != 'all':
+    if farm_name is None or str(farm_name).strip().lower() == 'all':
+        pass
+    elif not str(farm_name).strip():
+        where_clause += " AND 1 = 0"
+    else:
         where_clause += " AND farm_name = ?"
-        params.append(farm_name)
+        params.append(str(farm_name).strip())
         
     cursor.execute(f'''
         SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, 

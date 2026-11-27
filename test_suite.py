@@ -1546,6 +1546,229 @@ class CattleSystemTestCase(unittest.TestCase):
         conn.commit()
         conn.close()
 
+    # 20. РЕГРЕССИОННЫЕ ТЕСТЫ ПО РЕЗУЛЬТАТАМ САМОРЕВЬЮ КОДА (XSS, RATE-LIMIT, ФИЛЬТРЫ, ОТЧЁТЫ, БЭКАПЫ)
+    def test_20_code_review_security_and_bugfixes(self):
+        import xml.etree.ElementTree as ET
+        import openpyxl
+        from werkzeug.datastructures import FileStorage
+        from app import clear_all_rate_limits
+        from backup import create_db_backup_bytes, restore_db_from_upload
+        from aits_export import generate_aits_csv_registry, generate_aits_xml_registry
+        from report_generator import generate_csv_report, generate_simple_excel_report, generate_form_209_apk_excel
+        from form_210_apk import generate_form_210_apk_excel
+        from structured_report import generate_structured_excel_report
+        from matrix_report import generate_matrix_excel_report
+
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_ru = datetime.now().strftime('%d.%m.%Y')
+        xss_payload = '<img src=x onerror="alert(1)">'
+
+        # 20.1 Stored XSS экранируется в SSR и защищён через escapeHtml на клиенте (view_cows.html / dashboard.html)
+        self.login('farm1', 'Farm1Test#123')
+        csrf_add = self.get_csrf_token('/add_cow')
+        self.client.post('/add_cow', data={
+            'csrf_token': csrf_add,
+            'form_mode': 'cow',
+            'category': 'выбраковка',
+            'reason': xss_payload,
+            'disposal_date': today_str,
+            'ear_tag': 'BYXSS20',
+            'age_group': 'Полновозрастные коровы (2+ лакт.)',
+            'lactation': '2',
+            'weight': '500',
+        }, follow_redirects=True)
+
+        # Добавляем запись мертворождения на сегодня и проверяем фильтры с DD.MM.YYYY
+        csrf_sb = self.get_csrf_token('/add_stillborn')
+        self.client.post('/add_stillborn', data={
+            'csrf_token': csrf_sb,
+            'event_date': today_str,
+            'mother_tag': 'BYSB20',
+            'mother_group': 'Полновозрастные коровы (2+ лакт.)',
+            'event_type': 'Мертворождённый телёнок (в срок)',
+            'cause': 'Патология родов',
+            'fetus_sex': 'Бычок',
+            'fetus_weight': '31.5',
+            'gestation_days': '280',
+        }, follow_redirects=True)
+        self.logout()
+
+        self.login('admin', 'AdminTest#123')
+        res_cows = self.client.get('/cows?search=BYXSS20')
+        self.assertEqual(res_cows.status_code, 200)
+        html_cows = res_cows.data.decode('utf-8')
+        self.assertNotIn(xss_payload, html_cows)
+        self.assertIn('&lt;img src=x onerror=&#34;alert(1)&#34;&gt;', html_cows)
+        # Администратор видит кнопку удаления на /cows и /stillborn
+        self.assertIn('title="Удалить"', html_cows)
+
+        res_api = self.client.get('/api/cows?search=BYXSS20')
+        self.assertEqual(res_api.status_code, 200)
+        self.assertEqual(res_api.get_json()['cows'][0]['reason'], xss_payload)
+
+        with open(os.path.join(Config.BASE_DIR, 'templates', 'view_cows.html'), 'r', encoding='utf-8') as f:
+            vc_src = f.read()
+        self.assertIn('function escapeHtml(', vc_src)
+        self.assertIn("escapeHtml(cow.reason || '')", vc_src)
+        self.assertNotIn("option[value=\"' + paramReason", vc_src)
+        self.assertNotIn("option[value=\"' + paramPhase", vc_src)
+
+        with open(os.path.join(Config.BASE_DIR, 'templates', 'dashboard.html'), 'r', encoding='utf-8') as f:
+            dash_src = f.read()
+        self.assertNotIn('.innerHTML = `', dash_src)
+
+        # 20.2 Фильтрация мертворождений по DD.MM.YYYY работает одинаково в HTML и Excel-экспорте
+        res_sb_list = self.client.get(f'/stillborn?start_date={today_ru}&end_date={today_ru}')
+        self.assertEqual(res_sb_list.status_code, 200)
+        self.assertIn('BYSB20', res_sb_list.data.decode('utf-8'))
+
+        res_sb_xls = self.client.get(f'/export_stillborn_excel?start_date={today_ru}&end_date={today_ru}')
+        self.assertEqual(res_sb_xls.status_code, 200)
+        wb_sb = openpyxl.load_workbook(io.BytesIO(res_sb_xls.data))
+        sb_tags = [wb_sb.active.cell(row=r, column=5).value for r in range(5, wb_sb.active.max_row + 1)]
+        self.assertIn('BYSB20', sb_tags)
+        self.assertIn('title="Удалить"', res_sb_list.data.decode('utf-8'))
+
+        # 20.3 Отклонение несовместимых комбинаций отчётов / неизвестных типов / неверных категорий с HTTP 400
+        csrf_rep = self.get_csrf_token('/reports')
+        for bad_type, bad_fmt, bad_cat in [
+            ('form_210_apk', 'csv', ''),
+            ('matrix', 'csv', 'падёж'),
+            ('form_209_apk', 'xml', ''),
+            ('unknown_type', 'excel', ''),
+            ('matrix', 'excel', 'несуществующая_категория'),
+        ]:
+            res_bad_rep = self.client.post('/generate_report', data={
+                'csrf_token': csrf_rep,
+                'report_type': bad_type,
+                'format': bad_fmt,
+                'report_category': bad_cat,
+                'start_date': today_str,
+                'end_date': today_str,
+                'farm_filter': 'all',
+            }, follow_redirects=False)
+            self.assertEqual(res_bad_rep.status_code, 400, f"Ожидался 400 для {(bad_type, bad_fmt, bad_cat)}")
+
+        # 20.4 Валидация категории справочника причин выбытия (/reasons -> 400)
+        csrf_reas = self.get_csrf_token('/reasons')
+        res_bad_reason = self.client.post('/reasons', data={
+            'csrf_token': csrf_reas,
+            'category': 'invalid_cat',
+            'name': 'Тестовая причина',
+        }, follow_redirects=False)
+        self.assertEqual(res_bad_reason.status_code, 400)
+
+        # 20.5 Сохранение полей формы при ошибке /register (HTTP 400)
+        csrf_reg = self.get_csrf_token('/register')
+        res_bad_reg = self.client.post('/register', data={
+            'csrf_token': csrf_reg,
+            'username': 'keep_this_user',
+            'password': '123',
+            'user_type': 'farm',
+            'farm_name': 'Ферма Сохранения',
+        }, follow_redirects=False)
+        self.assertEqual(res_bad_reg.status_code, 400)
+        reg_html = res_bad_reg.data.decode('utf-8')
+        self.assertIn('keep_this_user', reg_html)
+        self.assertIn('Ферма Сохранения', reg_html)
+        self.logout()
+
+        # 20.6 Импорт CSV в кодировке cp1251 с разделителем ',' даже при наличии ';' в примечании
+        self.login('farm1', 'Farm1Test#123')
+        csrf_imp = self.get_csrf_token('/import_cows')
+        cp1251_csv = (
+            'Категория,Причина,Дата,Ушной №,Лактация,Масса,Примечание\n'
+            f'выбраковка,Мастит,{today_str},BYCP1251,2,505,"Осмотр; повторный; без осложнений"\n'
+        ).encode('cp1251')
+        res_cp_imp = self.client.post('/import_cows', data={
+            'csrf_token': csrf_imp,
+            'file': (io.BytesIO(cp1251_csv), 'cp1251_import.csv')
+        }, content_type='multipart/form-data', follow_redirects=True)
+        self.assertEqual(res_cp_imp.status_code, 200)
+        conn = get_db_connection()
+        cp_row = conn.execute("SELECT notes FROM cows WHERE ear_tag = 'BYCP1251'").fetchone()
+        self.assertIsNotNone(cp_row)
+        self.assertEqual(cp_row['notes'], 'Осмотр; повторный; без осложнений')
+
+        # 20.7 Очистка управляющих символов в XML AITS и fail-closed farm_name='' в генераторах отчётов
+        conn.execute(
+            "INSERT INTO cows (cow_id, ear_tag, farm_name, category, reason, disposal_date, weight) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ('XMLCTRL-1', 'BYXMLCTRL', 'Ферма 1', 'падёж', 'Шок\x00\x07септический', today_str, 0.0)
+        )
+        conn.commit()
+        conn.close()
+
+        xml_bytes = generate_aits_xml_registry(today_str, today_str, 'Ферма 1')
+        ET.fromstring(xml_bytes)  # Не должно падать с ExpatError
+        self.assertIn('Шоксептический', xml_bytes.decode('utf-8'))
+
+        # При weight=0.0 выводится '0.0', а не '-'
+        csv_f1 = generate_csv_report(today_str, today_str, 'Ферма 1')
+        self.assertIn(';0.0;', csv_f1)
+
+        # Fail-closed для пустой строки farm_name=''
+        self.assertEqual(len(generate_aits_csv_registry(today_str, today_str, '').strip().splitlines()), 1)
+        xml_empty = ET.fromstring(generate_aits_xml_registry(today_str, today_str, ''))
+        self.assertEqual(xml_empty.find('.//AnimalDisposals').attrib.get('count'), '0')
+        self.assertEqual(len(generate_csv_report(today_str, today_str, '').strip().splitlines()), 1)
+        self.assertEqual(generate_simple_excel_report(today_str, today_str, '').active.max_row, 1)
+        self.assertEqual(generate_form_209_apk_excel(today_str, today_str, '').active['I10'].value, '0 гол.')
+        self.assertEqual(generate_form_210_apk_excel(today_str, today_str, '').active['H11'].value, '0 голов')
+        self.assertEqual(generate_structured_excel_report(today_str, today_str, '').active.max_row, 4)
+        ws_mat_empty = generate_matrix_excel_report('падёж', today_str, today_str, farm_filter='').active
+        self.assertEqual(ws_mat_empty.cell(row=5, column=2).value, 'ИТОГО')
+        self.logout()
+
+        # 20.8 Подделка X-Forwarded-For: 127.0.0.1 не обходит anti_ddos_guard
+        from routes import auth as auth_routes
+        clear_all_rate_limits()
+        auth_routes.clear_all_auth_lockouts()
+        saved_rl_env = os.environ.get('ENABLE_TEST_RATELIMIT')
+        os.environ['ENABLE_TEST_RATELIMIT'] = '1'
+        try:
+            statuses = []
+            for _ in range(22):
+                tok = self.get_csrf_token('/login')
+                r = self.client.post(
+                    '/login',
+                    data={'username': 'no_such_user', 'password': 'bad', 'csrf_token': tok},
+                    headers={'X-Forwarded-For': '127.0.0.1'},
+                    environ_base={'REMOTE_ADDR': '10.99.0.1'}
+                )
+                statuses.append(r.status_code)
+            self.assertIn(429, statuses)
+        finally:
+            if saved_rl_env is None:
+                os.environ.pop('ENABLE_TEST_RATELIMIT', None)
+            else:
+                os.environ['ENABLE_TEST_RATELIMIT'] = saved_rl_env
+            clear_all_rate_limits()
+            auth_routes.clear_all_auth_lockouts()
+
+        # 20.9 API-запрос с must_change_password=True возвращает JSON 403 вместо HTML 302
+        ok_tmp, _ = register_user('tmp_pwd_api', 'TmpPass#123', 'farm', 'Ферма 1', must_change_password=True)
+        self.assertTrue(ok_tmp)
+        api_cli = self.app.test_client()
+        tok_tmp = self._extract_csrf(api_cli.get('/login').data)
+        res_tmp_login = api_cli.post('/login', data={'username': 'tmp_pwd_api', 'password': 'TmpPass#123', 'csrf_token': tok_tmp}, follow_redirects=False)
+        self.assertEqual(res_tmp_login.status_code, 302)
+        res_api_blocked = api_cli.get('/api/cows', follow_redirects=False)
+        self.assertEqual(res_api_blocked.status_code, 403)
+        self.assertEqual(res_api_blocked.get_json().get('error'), 'password_change_required')
+
+        # 20.10 После успешного восстановления БД аварийная копия .pre_restore_bak удаляется
+        bak_bytes, _ = create_db_backup_bytes()
+        ok_rest, _ = restore_db_from_upload(FileStorage(stream=io.BytesIO(bak_bytes), filename='clean.sqlite'), username='admin')
+        self.assertTrue(ok_rest)
+        self.assertFalse(os.path.exists(Config.DATABASE + '.pre_restore_bak'))
+
+        conn = get_db_connection()
+        conn.execute("DELETE FROM cows WHERE ear_tag IN ('BYXSS20', 'BYCP1251', 'BYXMLCTRL')")
+        conn.execute("DELETE FROM stillbirth_records WHERE mother_tag = 'BYSB20'")
+        conn.execute("DELETE FROM users WHERE username = 'tmp_pwd_api'")
+        conn.commit()
+        conn.close()
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

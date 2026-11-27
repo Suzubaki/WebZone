@@ -17,27 +17,17 @@ from .auth import login_required
 
 stillborn_bp = Blueprint('stillborn', __name__)
 
-@stillborn_bp.route('/stillborn')
-@login_required
-def stillborn_list():
-    """Просмотр профильного журнала учёта мертворождений и абортов"""
-    user_type = session.get('user_type')
-    session_farm = session.get('farm_name')
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    farm_filter = request.args.get('farm', '').strip()
-    event_type_filter = request.args.get('event_type', '').strip()
-    start_date = request.args.get('start_date', '').strip()
-    end_date = request.args.get('end_date', '').strip()
-    search = request.args.get('search', '').strip().lower()
-    page = max(1, request.args.get('page', 1, type=int))
-    per_page = 50
-    
+def _build_stillborn_where_clause(args, user_type, session_farm):
+    """Единый построитель WHERE-условия и нормализованных метаданных фильтра для журнала мертворождений."""
+    farm_filter = (args.get('farm') or '').strip()
+    event_type_filter = (args.get('event_type') or '').strip()
+    start_date = normalize_date(args.get('start_date')) or ''
+    end_date = normalize_date(args.get('end_date')) or ''
+    search = (args.get('search') or '').strip().lower()
+
     conditions = []
     params = []
-    
+
     if user_type != 'admin':
         clean_session_farm = (session_farm or '').strip()
         if not clean_session_farm or clean_session_farm.lower() == 'all':
@@ -48,11 +38,11 @@ def stillborn_list():
     elif farm_filter and farm_filter != 'all':
         conditions.append("farm_name = ?")
         params.append(farm_filter)
-        
+
     if event_type_filter and event_type_filter != 'all':
         conditions.append("event_type = ?")
         params.append(event_type_filter)
-        
+
     if start_date and end_date:
         s_dt, e_dt = (start_date, end_date) if start_date <= end_date else (end_date, start_date)
         conditions.append("event_date BETWEEN ? AND ?")
@@ -63,13 +53,41 @@ def stillborn_list():
     elif end_date:
         conditions.append("event_date <= ?")
         params.append(end_date)
-        
+
     if search:
         conditions.append("(LOWER(COALESCE(record_code,'')) LIKE ? OR LOWER(COALESCE(mother_tag,'')) LIKE ? OR LOWER(COALESCE(cause,'')) LIKE ? OR LOWER(COALESCE(farm_name,'')) LIKE ?)")
         wild = f"%{search}%"
         params.extend([wild, wild, wild, wild])
-        
+
     where_sql = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+    meta = {
+        'farm': farm_filter,
+        'event_type': event_type_filter,
+        'start_date': start_date,
+        'end_date': end_date,
+        'search': search,
+    }
+    return where_sql, params, meta
+
+
+@stillborn_bp.route('/stillborn')
+@login_required
+def stillborn_list():
+    """Просмотр профильного журнала учёта мертворождений и абортов"""
+    user_type = session.get('user_type')
+    session_farm = session.get('farm_name')
+
+    where_sql, params, meta = _build_stillborn_where_clause(request.args, user_type, session_farm)
+    farm_filter = meta['farm']
+    event_type_filter = meta['event_type']
+    start_date = meta['start_date']
+    end_date = meta['end_date']
+    search = meta['search']
+    page = max(1, request.args.get('page', 1, type=int))
+    per_page = 50
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
     
     # Список ферм для фильтра администратора
     if user_type == 'admin':
@@ -343,51 +361,14 @@ def export_stillborn_excel():
     """Выгрузка журнала мертворождений и абортов в Excel"""
     user_type = session.get('user_type')
     session_farm = session.get('farm_name')
-    
-    farm_filter = request.args.get('farm', '').strip()
-    event_type_filter = request.args.get('event_type', '').strip()
-    start_date = request.args.get('start_date', '').strip()
-    end_date = request.args.get('end_date', '').strip()
-    search = request.args.get('search', '').strip().lower()
-    
+
+    where_sql, params, meta = _build_stillborn_where_clause(request.args, user_type, session_farm)
+    farm_filter = meta['farm']
+    start_date = meta['start_date']
+    end_date = meta['end_date']
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    conditions = []
-    params = []
-    
-    if user_type != 'admin':
-        clean_session_farm = (session_farm or '').strip()
-        if not clean_session_farm or clean_session_farm.lower() == 'all':
-            conditions.append("1 = 0")
-        else:
-            conditions.append("farm_name = ?")
-            params.append(clean_session_farm)
-    elif farm_filter and farm_filter != 'all':
-        conditions.append("farm_name = ?")
-        params.append(farm_filter)
-
-    if event_type_filter and event_type_filter != 'all':
-        conditions.append("event_type = ?")
-        params.append(event_type_filter)
-        
-    if start_date and end_date:
-        s_dt, e_dt = (start_date, end_date) if start_date <= end_date else (end_date, start_date)
-        conditions.append("event_date BETWEEN ? AND ?")
-        params.extend([s_dt, e_dt])
-    elif start_date:
-        conditions.append("event_date >= ?")
-        params.append(start_date)
-    elif end_date:
-        conditions.append("event_date <= ?")
-        params.append(end_date)
-
-    if search:
-        conditions.append("(LOWER(COALESCE(record_code,'')) LIKE ? OR LOWER(COALESCE(mother_tag,'')) LIKE ? OR LOWER(COALESCE(cause,'')) LIKE ? OR LOWER(COALESCE(farm_name,'')) LIKE ?)")
-        wild = f"%{search}%"
-        params.extend([wild, wild, wild, wild])
-        
-    where_sql = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     cursor.execute(f"SELECT * FROM stillbirth_records {where_sql} ORDER BY event_date ASC", params)
     rows = cursor.fetchall()
     conn.close()

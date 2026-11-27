@@ -10,6 +10,16 @@ from config import Config
 from database import get_db_connection, get_setting
 from domain import format_lactation_or_age, sanitize_spreadsheet_cell
 
+def _apply_farm_filter_sql(where_clause, params, farm_name):
+    if farm_name is None or str(farm_name).strip().lower() == 'all':
+        return where_clause
+    clean_farm = str(farm_name).strip()
+    if not clean_farm:
+        return where_clause + " AND 1 = 0"
+    params.append(clean_farm)
+    return where_clause + " AND farm_name = ?"
+
+
 def generate_csv_report(start_date, end_date, farm_name=None):
     """Генерация расширенного отчета в формате CSV"""
     conn = get_db_connection()
@@ -17,10 +27,7 @@ def generate_csv_report(start_date, end_date, farm_name=None):
     
     where_clause = "WHERE disposal_date BETWEEN ? AND ? AND COALESCE(is_stillborn, 0) = 0"
     params = [start_date, end_date]
-    
-    if farm_name and farm_name != 'all':
-        where_clause += " AND farm_name = ?"
-        params.append(farm_name)
+    where_clause = _apply_farm_filter_sql(where_clause, params, farm_name)
         
     cursor.execute(f'''
         SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, age_group, weight, notes, created_at 
@@ -47,7 +54,7 @@ def generate_csv_report(start_date, end_date, farm_name=None):
             row['reason'],
             row['disposal_date'],
             format_lactation_or_age(row['lactation'], row['age_group']),
-            row['weight'] or '-',
+            row['weight'] if row['weight'] is not None else '-',
             row['notes'] or '-',
             row['created_at']
         ]])
@@ -62,10 +69,7 @@ def generate_simple_excel_report(start_date, end_date, farm_name=None):
     
     where_clause = "WHERE disposal_date BETWEEN ? AND ? AND COALESCE(is_stillborn, 0) = 0"
     params = [start_date, end_date]
-    
-    if farm_name and farm_name != 'all':
-        where_clause += " AND farm_name = ?"
-        params.append(farm_name)
+    where_clause = _apply_farm_filter_sql(where_clause, params, farm_name)
         
     cursor.execute(f'''
         SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, age_group, weight, notes 
@@ -96,7 +100,7 @@ def generate_simple_excel_report(start_date, end_date, farm_name=None):
             row['reason'],
             row['disposal_date'],
             format_lactation_or_age(row['lactation'], row['age_group']),
-            row['weight'] or '-',
+            row['weight'] if row['weight'] is not None else '-',
             row['notes'] or '-'
         ]])
         
@@ -122,9 +126,7 @@ def generate_form_209_apk_excel(start_date, end_date, farm_name=None):
     
     where_clause = "WHERE disposal_date BETWEEN ? AND ? AND COALESCE(is_stillborn, 0) = 0"
     params = [start_date, end_date]
-    if farm_name and farm_name != 'all':
-        where_clause += " AND farm_name = ?"
-        params.append(farm_name)
+    where_clause = _apply_farm_filter_sql(where_clause, params, farm_name)
         
     cursor.execute(f'''
         SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, age_group, weight, notes 
@@ -166,7 +168,9 @@ def generate_form_209_apk_excel(start_date, end_date, farm_name=None):
     ws['E2'].alignment = Alignment(horizontal='right')
     
     org_name = get_setting('farm_org_name', Config.DEFAULT_ORG_NAME)
-    ws['A4'] = f"Сельскохозяйственная организация: {farm_name if (farm_name and farm_name != 'all') else org_name}"
+    clean_farm_label = str(farm_name).strip() if (farm_name is not None and str(farm_name).strip() and str(farm_name).strip().lower() != 'all') else ''
+    org_line = f"{org_name} (Ферма: {clean_farm_label})" if clean_farm_label else org_name
+    ws['A4'] = f"Сельскохозяйственная организация: {org_line}"
     ws['A4'].font = Font(name='Arial', size=10, bold=True)
     
     ws.merge_cells('A6:I6')

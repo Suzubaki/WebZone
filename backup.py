@@ -1,10 +1,15 @@
 # backup.py - Модуль резервного копирования и восстановления базы данных
+import contextlib
 import logging
 import os
 import tempfile
 import shutil
 import sqlite3
 from datetime import datetime
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 from config import Config
 from database import (
     _write_lock,
@@ -41,6 +46,22 @@ def _remove_db_and_sidecars(db_path, ignore_errors=False):
             except OSError:
                 if not ignore_errors:
                     raise
+
+
+@contextlib.contextmanager
+def _restore_process_lock(db_dir):
+    """Межпроцессная блокировка восстановления БД (защита от гонок между WSGI-воркерами)."""
+    if fcntl is None:
+        yield
+        return
+    os.makedirs(db_dir, exist_ok=True)
+    lock_path = os.path.join(db_dir, '.restore.lock')
+    with open(lock_path, 'a+', encoding='utf-8') as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def create_db_backup_bytes():
@@ -128,41 +149,44 @@ def restore_db_from_upload(upload_file, username=None, ip_address=None):
         if 'cows' not in tables or 'users' not in tables:
             return False, 'В резервной копии отсутствуют обязательные таблицы (cows, users)'
 
-        with _write_lock:
-            has_pre_backup = False
-            if os.path.exists(db_path):
-                try:
-                    _remove_db_and_sidecars(pre_restore_bak, ignore_errors=True)
-                    _sqlite_online_backup(db_path, pre_restore_bak)
-                    has_pre_backup = True
-                except sqlite3.DatabaseError:
-                    # Если текущая БД на диске повреждена, сохраняем сырую копию перед очисткой
-                    shutil.copy2(db_path, pre_restore_bak)
-                    has_pre_backup = True
-
-            try:
-                try:
-                    _sqlite_online_backup(temp_path, db_path)
-                except sqlite3.DatabaseError:
-                    # Fallback при повреждении исходной БД: удаляем БД и -wal/-shm и заменяем файлом
-                    _remove_db_and_sidecars(db_path)
-                    shutil.copy2(temp_path, db_path)
-
-                reset_connection_state()
-                invalidate_settings_cache()
-                init_db()
-                invalidate_settings_cache()
-            except Exception as restore_err:
-                logger.exception("Сбой восстановления БД, выполняется откат к аварийной копии")
-                if has_pre_backup and os.path.exists(pre_restore_bak):
+        with _restore_process_lock(db_dir):
+            with _write_lock:
+                has_pre_backup = False
+                if os.path.exists(db_path):
                     try:
-                        _sqlite_online_backup(pre_restore_bak, db_path)
+                        _remove_db_and_sidecars(pre_restore_bak, ignore_errors=True)
+                        _sqlite_online_backup(db_path, pre_restore_bak)
+                        has_pre_backup = True
                     except sqlite3.DatabaseError:
-                        _remove_db_and_sidecars(db_path, ignore_errors=True)
-                        shutil.copy2(pre_restore_bak, db_path)
+                        # Если текущая БД на диске повреждена, сохраняем сырую копию перед очисткой
+                        shutil.copy2(db_path, pre_restore_bak)
+                        has_pre_backup = True
+
+                try:
+                    try:
+                        _sqlite_online_backup(temp_path, db_path)
+                    except sqlite3.DatabaseError:
+                        # Fallback при повреждении исходной БД: удаляем БД и -wal/-shm и заменяем файлом
+                        _remove_db_and_sidecars(db_path)
+                        shutil.copy2(temp_path, db_path)
+
                     reset_connection_state()
                     invalidate_settings_cache()
-                return False, f'Ошибка при восстановлении базы данных (выполнен откат): {str(restore_err)}'
+                    init_db()
+                    invalidate_settings_cache()
+                    if has_pre_backup:
+                        _remove_db_and_sidecars(pre_restore_bak, ignore_errors=True)
+                except Exception as restore_err:
+                    logger.exception("Сбой восстановления БД, выполняется откат к аварийной копии")
+                    if has_pre_backup and os.path.exists(pre_restore_bak):
+                        try:
+                            _sqlite_online_backup(pre_restore_bak, db_path)
+                        except sqlite3.DatabaseError:
+                            _remove_db_and_sidecars(db_path, ignore_errors=True)
+                            shutil.copy2(pre_restore_bak, db_path)
+                        reset_connection_state()
+                        invalidate_settings_cache()
+                    return False, f'Ошибка при восстановлении базы данных (выполнен откат): {str(restore_err)}'
 
         log_audit_event(
             username=username or 'Admin',

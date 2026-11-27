@@ -646,9 +646,30 @@ def import_cows():
 
         try:
             if filename.endswith('.csv'):
-                raw_text = file.stream.read().decode("utf-8-sig")
+                raw_bytes = file.stream.read()
+                raw_text = None
+                for enc in ('utf-8-sig', 'cp1251', 'cp866'):
+                    try:
+                        raw_text = raw_bytes.decode(enc)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                if raw_text is None:
+                    flash('Не удалось декодировать CSV-файл. Сохраните файл в кодировке UTF-8 или Windows-1251.', 'danger')
+                    return redirect(request.url)
+                non_empty_lines = [ln for ln in raw_text.splitlines() if ln.strip()]
+                first_line = non_empty_lines[0] if non_empty_lines else ''
+                delimiter = ';'
+                if first_line:
+                    try:
+                        dialect = csv.Sniffer().sniff(first_line, delimiters=';,\t')
+                        delimiter = dialect.delimiter
+                    except csv.Error:
+                        counts = {d: first_line.count(d) for d in (';', ',', '\t')}
+                        best_delim = max(counts, key=counts.get)
+                        delimiter = best_delim if counts[best_delim] > 0 else ';'
                 stream = io.StringIO(raw_text, newline=None)
-                csv_reader = csv.reader(stream, delimiter=';' if ';' in raw_text else ',')
+                csv_reader = csv.reader(stream, delimiter=delimiter)
                 next(csv_reader, None)
                 row_iter = enumerate(csv_reader, start=2)
             elif filename.endswith('.xlsx'):

@@ -109,7 +109,7 @@
 
                         <div class="col-md-3">
                             <label for="fetus_weight" class="form-label fw-semibold">Масса плода (кг)</label>
-                            <input type="number" step="0.1" class="form-control" id="fetus_weight" name="fetus_weight" min="0" max="80" 
+                            <input type="number" step="0.1" class="form-control" id="fetus_weight" name="fetus_weight" min="0.1" max="120" 
                                    value="{{ record.fetus_weight if (record and record.fetus_weight is not none) else '28.0' }}" placeholder="кг">
                         </div>
 

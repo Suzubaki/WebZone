@@ -32,6 +32,17 @@ def _normalize_report_dates(start_raw, end_raw):
         start_date, end_date = end_date, start_date
     return start_date, end_date
 
+ALLOWED_REPORT_FORMATS = {
+    'form_209_apk': {'excel', 'preview'},
+    'sp54': {'excel', 'preview'},
+    'form_210_apk': {'excel', 'preview'},
+    'aits_registry': {'csv', 'xml'},
+    'matrix': {'excel'},
+    'structured': {'excel'},
+    'simple': {'excel', 'csv', 'preview'},
+}
+
+
 @reports_bp.route('/reports')
 @login_required
 def reports():
@@ -42,20 +53,33 @@ def reports():
 @login_required
 def generate_report():
     """Формирование сводных актов, списков и выгрузок в различных форматах"""
-    report_type = request.form.get('report_type')
-    report_format = request.form.get('format')
+    report_type = (request.form.get('report_type') or '').strip()
+    report_format = (request.form.get('format') or '').strip()
     start_date, end_date = _normalize_report_dates(request.form.get('start_date'), request.form.get('end_date'))
     farm_filter = request.form.get('farm_filter')
-    report_category = request.form.get('report_category')
-    
+    report_category = (request.form.get('report_category') or '').strip()
+
+    if report_type not in ALLOWED_REPORT_FORMATS or report_format not in ALLOWED_REPORT_FORMATS[report_type]:
+        flash('Выбранная комбинация типа документа и формата выгрузки не поддерживается.', 'danger')
+        return render_template('reports.html', user_type=session.get('user_type')), 400
+
+    if report_type == 'matrix':
+        if not report_category:
+            report_category = 'падёж'
+        elif report_category not in Config.DISPOSAL_CATEGORIES:
+            flash('Указана недопустимая категория для матричного отчёта.', 'danger')
+            return render_template('reports.html', user_type=session.get('user_type')), 400
+
     if session.get('user_type') != 'admin':
         farm_filter = (session.get('farm_name') or '').strip()
         if not farm_filter or farm_filter.lower() == 'all':
             flash('Учётная запись не привязана к ферме. Обратитесь к администратору для указания подразделения.', 'danger')
             return redirect(url_for('reports.reports'))
-        
+    else:
+        farm_filter = (farm_filter or 'all').strip() or 'all'
+
     # 1. Акт на выбытие животных и птицы (Форма № 209-АПК / СП-54)
-    if report_type in ['form_209_apk', 'sp54'] and report_format not in ['preview', 'csv']:
+    if report_type in ['form_209_apk', 'sp54'] and report_format == 'excel':
         wb = generate_form_209_apk_excel(start_date, end_date, farm_filter)
         filename = f"akt_209_apk_RB_{start_date}_{end_date}.xlsx"
         out = io.BytesIO()

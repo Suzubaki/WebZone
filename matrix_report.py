@@ -41,15 +41,18 @@ def generate_matrix_excel_report(category, start_date=None, end_date=None, farm_
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    if farm_filter and farm_filter != 'all':
-        farms = [farm_filter]
-    else:
+    clean_farm_filter = None if farm_filter is None else str(farm_filter).strip()
+    if clean_farm_filter is None or clean_farm_filter.lower() == 'all':
         cursor.execute('SELECT DISTINCT farm_name FROM cows WHERE farm_name IS NOT NULL AND farm_name != "" AND COALESCE(is_stillborn, 0) = 0 ORDER BY farm_name')
         farms = [row['farm_name'] for row in cursor.fetchall()]
 
         if not farms:
             cursor.execute('SELECT DISTINCT farm_name FROM users WHERE farm_name IS NOT NULL AND farm_name != "" ORDER BY farm_name')
             farms = [row['farm_name'] for row in cursor.fetchall()]
+    elif not clean_farm_filter:
+        farms = []
+    else:
+        farms = [clean_farm_filter]
 
     # Динамический расчёт ширины объединённой шапки (1-я кол. + фермы + ИТОГО)
     end_col_idx = max(2 + len(farms), 3)
@@ -104,9 +107,13 @@ def generate_matrix_excel_report(category, start_date=None, end_date=None, farm_
     if start_date and end_date:
         extra_filter += " AND disposal_date BETWEEN ? AND ?"
         sql_params.extend([start_date, end_date])
-    if farm_filter and farm_filter != 'all':
+    if clean_farm_filter is None or clean_farm_filter.lower() == 'all':
+        pass
+    elif not clean_farm_filter:
+        extra_filter += " AND 1 = 0"
+    else:
         extra_filter += " AND farm_name = ?"
-        sql_params.append(farm_filter)
+        sql_params.append(clean_farm_filter)
 
     cursor.execute(f'''
         SELECT reason, farm_name, COUNT(*) as cnt

@@ -118,6 +118,15 @@ $(document).ready(function() {
     });
     {% endif %}
     
+    var REPORT_FORMATS = {
+        'form_209_apk': ['excel', 'preview'],
+        'form_210_apk': ['excel', 'preview'],
+        'aits_registry': ['csv', 'xml'],
+        'matrix': ['excel'],
+        'structured': ['excel'],
+        'simple': ['excel', 'csv', 'preview']
+    };
+
     function updateFormFields() {
         var rType = $('#report_type').val();
         if (rType === 'matrix') {
@@ -127,9 +136,17 @@ $(document).ready(function() {
             $('#category_field').slideUp(150);
             $('#report_category').prop('required', false);
         }
-        
-        if (rType === 'aits_registry') {
-            $('#format').val('csv');
+
+        var allowed = REPORT_FORMATS[rType] || ['excel'];
+        var $fmt = $('#format');
+        var curFmt = $fmt.val();
+        $fmt.find('option').each(function() {
+            var optVal = $(this).val();
+            var isOk = allowed.indexOf(optVal) !== -1;
+            $(this).prop('disabled', !isOk).prop('hidden', !isOk);
+        });
+        if (allowed.indexOf(curFmt) === -1) {
+            $fmt.val(rType === 'aits_registry' ? 'csv' : allowed[0]);
         }
     }
     

@@ -1599,7 +1599,12 @@ $(document).ready(function() {
         if (!box.querySelector('.chart-empty-state')) {
             const msg = document.createElement('div');
             msg.className = 'chart-empty-state h-100 d-flex flex-column align-items-center justify-content-center text-muted small text-center px-3';
-            msg.innerHTML = '<i class="bi bi-bar-chart fs-3 opacity-50 mb-2"></i><span>' + (text || 'За выбранный период данных нет') + '</span>';
+            const icon = document.createElement('i');
+            icon.className = 'bi bi-bar-chart fs-3 opacity-50 mb-2';
+            const span = document.createElement('span');
+            span.textContent = text || 'За выбранный период данных нет';
+            msg.appendChild(icon);
+            msg.appendChild(span);
             box.appendChild(msg);
         }
     }
@@ -2467,7 +2472,13 @@ function saveDashboardThresholds(event) {
         const vc = parseFloat(form.querySelector(`[name="${kc}"]`)?.value);
         if (!(vn <= vw && vw <= vc)) {
             alertBox.className = 'alert alert-danger d-flex align-items-center gap-2 mb-3';
-            alertBox.innerHTML = `<i class="bi bi-exclamation-triangle-fill fs-5"></i><div>Ошибка порогов «${label}»: должно выполняться Норма ≤ Внимание ≤ Критично (${vn} ≤ ${vw} ≤ ${vc}).</div>`;
+            alertBox.replaceChildren();
+            const warnIcon = document.createElement('i');
+            warnIcon.className = 'bi bi-exclamation-triangle-fill fs-5';
+            const msgDiv = document.createElement('div');
+            msgDiv.textContent = `Ошибка порогов «${label}»: должно выполняться Норма ≤ Внимание ≤ Критично (${vn} ≤ ${vw} ≤ ${vc}).`;
+            alertBox.appendChild(warnIcon);
+            alertBox.appendChild(msgDiv);
             alertBox.classList.remove('d-none');
             return;
         }
@@ -2500,7 +2511,16 @@ function saveDashboardThresholds(event) {
     })
     .then(data => {
         alertBox.className = 'alert alert-success d-flex align-items-center gap-2 mb-3';
-        alertBox.innerHTML = '<i class="bi bi-check-circle-fill fs-5"></i><div><strong>Успешно!</strong> ' + (data.message || 'Нормативы и пороги тревог сохранены.') + ' Обновление...</div>';
+        alertBox.replaceChildren();
+        const okIcon = document.createElement('i');
+        okIcon.className = 'bi bi-check-circle-fill fs-5';
+        const okDiv = document.createElement('div');
+        const strong = document.createElement('strong');
+        strong.textContent = 'Успешно! ';
+        okDiv.appendChild(strong);
+        okDiv.appendChild(document.createTextNode((data.message || 'Нормативы и пороги тревог сохранены.') + ' Обновление...'));
+        alertBox.appendChild(okIcon);
+        alertBox.appendChild(okDiv);
         alertBox.classList.remove('d-none');
         setTimeout(() => {
             window.location.reload();
@@ -2508,7 +2528,13 @@ function saveDashboardThresholds(event) {
     })
     .catch(error => {
         alertBox.className = 'alert alert-danger d-flex align-items-center gap-2 mb-3';
-        alertBox.innerHTML = '<i class="bi bi-exclamation-triangle-fill fs-5"></i><div>' + (error.message || 'Ошибка при сохранении нормативов') + '</div>';
+        alertBox.replaceChildren();
+        const errIcon = document.createElement('i');
+        errIcon.className = 'bi bi-exclamation-triangle-fill fs-5';
+        const errDiv = document.createElement('div');
+        errDiv.textContent = error.message || 'Ошибка при сохранении нормативов';
+        alertBox.appendChild(errIcon);
+        alertBox.appendChild(errDiv);
         alertBox.classList.remove('d-none');
         submitBtn.disabled = false;
         submitBtn.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i> Сохранить нормативы и пороги';

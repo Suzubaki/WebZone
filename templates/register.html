@@ -12,9 +12,10 @@
             <div class="card-body">
                 <form method="POST" action="{{ url_for('register') }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    {% set fd = form_data or {} %}
                     <div class="mb-3">
                         <label for="username" class="form-label">Имя пользователя</label>
-                        <input type="text" class="form-control" id="username" name="username" required>
+                        <input type="text" class="form-control" id="username" name="username" value="{{ fd.get('username', '') }}" required>
                         <div class="form-text">Уникальное имя для входа в систему</div>
                     </div>
                     
@@ -27,14 +28,14 @@
                         <label for="user_type" class="form-label">Тип пользователя</label>
                         <select class="form-select" id="user_type" name="user_type" required onchange="toggleFarmField()">
                             <option value="">Выберите тип</option>
-                            <option value="admin">Администратор</option>
-                            <option value="farm">Ферма</option>
+                            <option value="admin" {% if fd.get('user_type') == 'admin' %}selected{% endif %}>Администратор</option>
+                            <option value="farm" {% if fd.get('user_type') == 'farm' %}selected{% endif %}>Ферма</option>
                         </select>
                     </div>
                     
                     <div class="mb-3" id="farm_name_field" style="display: none;">
                         <label for="farm_name" class="form-label">Название фермы</label>
-                        <input type="text" class="form-control" id="farm_name" name="farm_name">
+                        <input type="text" class="form-control" id="farm_name" name="farm_name" value="{{ fd.get('farm_name', '') }}">
                         <div class="form-text">Укажите уникальное название вашей фермы</div>
                     </div>
                     

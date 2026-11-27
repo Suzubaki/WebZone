@@ -2,12 +2,31 @@
 import sqlite3
 import csv
 import io
+import re
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 from datetime import datetime
 from config import Config
 from database import get_db_connection, get_setting
 from domain import sanitize_spreadsheet_cell
+
+_XML_INVALID_CHARS_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+
+
+def _clean_xml_text(value):
+    if value is None:
+        return ''
+    return _XML_INVALID_CHARS_RE.sub('', str(value))
+
+
+def _apply_farm_filter_sql(where, params, farm_name):
+    if farm_name is None or str(farm_name).strip().lower() == 'all':
+        return where
+    clean_farm = str(farm_name).strip()
+    if not clean_farm:
+        return where + " AND 1 = 0"
+    params.append(clean_farm)
+    return where + " AND farm_name = ?"
 
 # Коды событий выбытия по классификатору ГИС AITS (РБ)
 AITS_EVENT_CODES = {
@@ -25,9 +44,7 @@ def generate_aits_csv_registry(start_date, end_date, farm_name=None):
     
     where = "WHERE disposal_date BETWEEN ? AND ? AND COALESCE(is_stillborn, 0) = 0"
     params = [start_date, end_date]
-    if farm_name and farm_name != 'all':
-        where += " AND farm_name = ?"
-        params.append(farm_name)
+    where = _apply_farm_filter_sql(where, params, farm_name)
         
     cursor.execute(f'''
         SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, lactation, weight, age_group 
@@ -97,9 +114,7 @@ def generate_aits_xml_registry(start_date, end_date, farm_name=None):
     
     where = "WHERE disposal_date BETWEEN ? AND ? AND COALESCE(is_stillborn, 0) = 0"
     params = [start_date, end_date]
-    if farm_name and farm_name != 'all':
-        where += " AND farm_name = ?"
-        params.append(farm_name)
+    where = _apply_farm_filter_sql(where, params, farm_name)
         
     cursor.execute(f'''
         SELECT cow_id, ear_tag, farm_name, category, reason, disposal_date, weight, age_group 
@@ -110,8 +125,8 @@ def generate_aits_xml_registry(start_date, end_date, farm_name=None):
     rows = cursor.fetchall()
     conn.close()
     
-    unp = get_setting('farm_unp', Config.DEFAULT_UNP)
-    org_name = get_setting('farm_org_name', Config.DEFAULT_ORG_NAME)
+    unp = _clean_xml_text(get_setting('farm_unp', Config.DEFAULT_UNP))
+    org_name = _clean_xml_text(get_setting('farm_org_name', Config.DEFAULT_ORG_NAME))
     
     root = ET.Element('AitsDisposalRegistry', {
         'version': '1.0',
@@ -121,26 +136,26 @@ def generate_aits_xml_registry(start_date, end_date, farm_name=None):
     })
     
     period = ET.SubElement(root, 'ReportPeriod')
-    ET.SubElement(period, 'StartDate').text = start_date
-    ET.SubElement(period, 'EndDate').text = end_date
+    ET.SubElement(period, 'StartDate').text = _clean_xml_text(start_date)
+    ET.SubElement(period, 'EndDate').text = _clean_xml_text(end_date)
     
     items = ET.SubElement(root, 'AnimalDisposals', {'count': str(len(rows))})
     
     for r in rows:
         animal = ET.SubElement(items, 'DisposalRecord')
-        ET.SubElement(animal, 'InternalId').text = str(r['cow_id'])
-        ET.SubElement(animal, 'AnimalId').text = str(r['ear_tag'] or '')
-        ET.SubElement(animal, 'HoldingUnit').text = str(r['farm_name'])
+        ET.SubElement(animal, 'InternalId').text = _clean_xml_text(r['cow_id'])
+        ET.SubElement(animal, 'AnimalId').text = _clean_xml_text(r['ear_tag'] or '')
+        ET.SubElement(animal, 'HoldingUnit').text = _clean_xml_text(r['farm_name'])
         
         event_code = AITS_EVENT_CODES.get(r['category'], '01')
         ET.SubElement(animal, 'EventCode').text = event_code
-        ET.SubElement(animal, 'Category').text = str(r['category'])
-        ET.SubElement(animal, 'EventDate').text = str(r['disposal_date'])
-        ET.SubElement(animal, 'ReasonDiagnosis').text = str(r['reason'])
-        if r['weight']:
-            ET.SubElement(animal, 'LiveWeightKg').text = str(r['weight'])
+        ET.SubElement(animal, 'Category').text = _clean_xml_text(r['category'])
+        ET.SubElement(animal, 'EventDate').text = _clean_xml_text(r['disposal_date'])
+        ET.SubElement(animal, 'ReasonDiagnosis').text = _clean_xml_text(r['reason'])
+        if r['weight'] is not None:
+            ET.SubElement(animal, 'LiveWeightKg').text = _clean_xml_text(r['weight'])
         if r['age_group']:
-            ET.SubElement(animal, 'AgeGroup').text = str(r['age_group'])
+            ET.SubElement(animal, 'AgeGroup').text = _clean_xml_text(r['age_group'])
             
     xml_str = ET.tostring(root, encoding='utf-8')
     parsed = minidom.parseString(xml_str)

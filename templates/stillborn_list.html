@@ -189,7 +189,6 @@
                                         <a href="{{ url_for('stillborn.edit_stillborn', record_id=r.id) }}" class="btn btn-outline-primary btn-sm" title="Редактировать акт">
                                             <i class="bi bi-pencil"></i>
                                         </a>
-                                        {% if user_type != 'admin' %}
                                         <form method="POST" action="{{ url_for('stillborn.delete_stillborn', record_id=r.id) }}" class="d-inline delete-stillborn-form">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <button type="button" class="btn btn-outline-danger btn-sm btn-delete-stillborn"
@@ -197,7 +196,6 @@
                                                 <i class="bi bi-trash"></i>
                                             </button>
                                         </form>
-                                        {% endif %}
                                     </td>
                                 </tr>
                                 {% endfor %}
